@@ -1,4 +1,5 @@
 ; This is a init file for Mini-Scheme.
+; Some modifications by Zak Fenton MMXX for use in KScheme (removed any code with additional copyright notices)
 
 ;; fake pre R^3 boolean values
 (define nil #f)
