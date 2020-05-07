@@ -33,6 +33,7 @@ It _doesn't_ support:
 
 Things I'm looking at maybe adding soon:
 
+ * Persistence (saving and restoring program state)
  * A somewhat-proper test suite
  * Improved API for embedding (including factoring out malloc/stdio type calls into ones that can be managed by a larger program)
  * Some improved string/number/math/unicode support (ideally, this would be factored out so it can be disabled for low-resource environments, as the existing functionality might be "just enough" for many situations and in many cases the limitations can be worked around in Scheme code anyway)
