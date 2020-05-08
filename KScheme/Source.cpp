@@ -2431,7 +2431,7 @@ int kscm__fread_str(kscm_t* kscm, FILE* f, const char** result) {
 		*result = NULL;
 		return 0;
 	}
-	fprintf(stderr, "Got length %d\n", len);
+	//fprintf(stderr, "Got length %d\n", len);
 	if (len > 1000) {
 		*result = NULL;
 		return 0;
@@ -2817,25 +2817,27 @@ kscm_object_t(*kscm__shared_dispatch_table[])(kscm_t* kscm, register short op) =
 	&kscm__opexe_7, /* KSCM_OP_RESUME_STATE, */
 };
 
+/* These and the commented-out parts of kscm__eval_cycle can be re-enabled if you need to make sure the interpreter is running.
 int fixme_reccheck = 0;
 int fixme_ops = 0;
+*/
 /* kernel of this intepreter */
 kscm_object_t kscm__eval_cycle(kscm_t* kscm, register short op)
 {
-	fixme_reccheck++;
+	/*fixme_reccheck++;
 	if (fixme_reccheck > 1) {
 		fprintf(stderr, "Warning reccheck=%d\n", fixme_reccheck);
-	}
+	}*/
 	kscm->_operator = op;
 	for (;;) {
 		if ((*kscm__shared_dispatch_table[kscm->_operator])(kscm, kscm->_operator) == kscm->NIL) {
-			fixme_reccheck--;
+			//fixme_reccheck--;
 			return kscm->NIL;
 		}
-		if ((fixme_ops % 1000) == 0) {
+		/*if ((fixme_ops % 1000) == 0) {
 			fprintf(stderr, "Just did op %d\n", fixme_ops);
 		}
-		fixme_ops++;
+		fixme_ops++;*/
 	}
 }
 
