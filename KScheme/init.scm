@@ -52,3 +52,53 @@
     (if (< i 3)
         1
         (+ (fib (- i 2)) (fib (- i 1)))))
+
+(define (fib-tests i)
+    (and
+        (tests)
+        (if (< i 3)
+        1
+        (+ (fib (- i 2)) (fib (- i 1))))))
+
+(define (strpad str ext len)
+    (if (>= (strlen str) len)
+        str
+        (strpad (strcat str ext) ext len)))
+
+(define (fib-box i)
+    (cons "fib-box" (strpad "" "I" i)))
+
+(define (fib-unbox b)
+    (strlen (cdr b)))
+
+(define (boxed-fib b)
+    (if (< (fib-unbox b) 3)
+        (fib-box 1)
+        (fib-box
+            (+
+                (fib-unbox (boxed-fib (fib-box (- (fib-unbox b) 2))))
+                (fib-unbox (boxed-fib (fib-box (- (fib-unbox b) 1))))))))
+
+
+(define (tests-check name expected result)
+    (if (= result expected)
+        "Success"
+        (begin
+            (display "FAILED: ") (display name) (display ": Expected ") (display expected) (display " but got ") (display result) (newline)
+            #f)))
+
+(define (tests-simple)
+    (and
+        (tests-check "(+ 1 1)" 2 (+ 1 1))
+        (tests-check "(- 1 1)" 0 (- 1 1))
+        (tests-check "(* 2 3)" 6 (* 2 3))
+        (tests-check "(/ 12 3)" 4 (/ 12 3))
+        (tests-check "(string? 12)" #f (string? 12))
+        (tests-check "(number? 12)" #t (number? 12))))
+
+(define (tests)
+    (tests-simple))
+
+(define (lstring-of-primitive-string str) (cons 'lstring (cons str '())))
+
+(define (lstring? str) (and (pair? str) (eq? (car str) 'lstring)))
