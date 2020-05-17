@@ -102,3 +102,55 @@
 (define (lstring-of-primitive-string str) (cons 'lstring (cons str '())))
 
 (define (lstring? str) (and (pair? str) (eq? (car str) 'lstring)))
+
+; A simple attempt at exception handling
+
+(define exit-to-top #f)
+(call/cc (lambda (x) (set! exit-to-top x)))
+(define current-exception-handlers '())
+(define (throw-recursive handlers x)
+    (if (null? handlers)
+        (exit-to-top (list 'uncaught-exception x))
+        (begin
+            (set! current-exception-handlers (cdr handlers))
+            ((car handlers) (cons #f x))
+        )))
+(define (throw x)
+    (throw-recursive current-exception-handlers x))
+(define (pcall f)
+    (call/cc (lambda (continuation)
+        (set! current-exception-handlers (cons continuation current-exception-handlers))
+        (let ((result (f)))
+            (set! current-exception-handlers (cdr current-exception-handlers))
+            (cons #t result))
+    )))
+(begin (display "Loaded init.scm!") (newline))
+
+;(define int+ +)
+;(define (+ a b)
+;    (if (and (string? a) (string? b))
+;        (strcat a b)
+;        (int+ a b)))
+
+; Cleaned up versions of basic arithmetic functions, throwing exceptions instead of returning
+; false on overflow or bad input
+(define fast+ +)
+(define fast- -)
+(define fast* *)
+(define fast/ /)
+
+(define (+ . args)
+    (let ((result (apply fast+ args)))
+        (if result result (throw (cons 'math-error (cons '+ args))))))
+(define (- . args)
+    (let ((result (apply fast- args)))
+        (if result result (throw (cons 'math-error (cons '- args))))))
+(define (* . args)
+    (let ((result (apply fast* args)))
+        (if result result (throw (cons 'math-error (cons '* args))))))
+(define (/ . args)
+    (let ((result (apply fast/ args)))
+        (if result result (throw (cons 'math-error (cons '/ args))))))
+
+; This is a hook back to the internal parser, it'll be called when encountering a large number
+(define (parse-number str) (throw (cons 'number-too-large str)))
