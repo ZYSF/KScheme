@@ -97,6 +97,8 @@ extern "C" {
 #define KSCM_CONFIG_USE_PRECISE	/* undef this if you do not need overflow detection and precise integer size */
 #define KSCM_CONFIG_USE_STRUCTS	/* undef this if you do not need additional structure types (buffers, vectors, etc.)*/
 
+#define KSCM_CONFIG_MAXLOADS 20 /* the maximum depth of the load stack */
+
 #ifdef KSCM_CONFIG_USE_PRECISE
 #include <stdint.h>
 #endif
@@ -532,7 +534,9 @@ struct kscm {
 	kscm_object_t free_cell = &_NIL;	/* pointer to top of free cells */
 	long    fcells = 0;		/* # of free cells */
 
-	FILE* infp;			/* input file */
+	//FILE* infp;			/* input file */
+	FILE* inputs[KSCM_CONFIG_MAXLOADS];
+	int inputtop; // = 0; (TODO: Remove the other initialisers - assume calloc or similar clears memory prior during manual initialisation)
 	FILE* outfp;			/* output file */
 
 #ifdef KSCM_CONFIG_USE_SETJMP
@@ -996,15 +1000,25 @@ void kscm__gc(kscm_t* kscm, register kscm_object_t a, register kscm_object_t b)
 int     kscm__inchar(kscm_t* kscm)
 {
 	if (kscm->currentline >= kscm->endline) {	/* input buffer is empty */
-		if (feof(kscm->infp)) {
-			fclose(kscm->infp);
-			kscm->infp = stdin;
-			if (!kscm->quiet)
-				printf(KSCM_CONFIG_PROMPT);
+		if (feof(kscm->inputs[kscm->inputtop])) {
+			fclose(kscm->inputs[kscm->inputtop]);
+			if (kscm->inputtop > 0) { // return to outer input
+				kscm->inputs[kscm->inputtop] = NULL;
+				kscm->inputtop--;
+				if (kscm->inputs[kscm->inputtop] == stdin) {
+					if (!kscm->quiet)
+						printf(KSCM_CONFIG_PROMPT);
+				}
+			}
+			else { // go back to the top-level
+				kscm->inputs[kscm->inputtop] = stdin;
+				if (!kscm->quiet)
+					printf(KSCM_CONFIG_PROMPT);
+			}
 		}
-		strcpy(kscm->linebuff, "\n");
-		if (fgets(kscm->currentline = kscm->linebuff, LINESIZE, kscm->infp) == NULL)
-			if (kscm->infp == stdin) {
+		strcpy(kscm->linebuff, "\n"); // TODO: Why's this here? -Zak.
+		if (fgets(kscm->currentline = kscm->linebuff, LINESIZE, kscm->inputs[kscm->inputtop]) == NULL)
+			if (kscm->inputs[kscm->inputtop] == stdin) {
 				if (!kscm->quiet)
 					fprintf(stderr, "Good-bye\n");
 				exit(0);
@@ -1021,11 +1035,23 @@ void kscm__clearinput(kscm_t* kscm)
 }
 
 /* back to standard input */
-void kscm__flushinput(kscm_t* kscm)
+void kscm__resetinput(kscm_t* kscm)
 {
-	if (kscm->infp != stdin) {
-		fclose(kscm->infp);
-		kscm->infp = stdin;
+	/*if (kscm->inputs[kscm->inputtop] != stdin) {
+		fclose(kscm->inputs[kscm->inputtop]);
+		kscm->inputs[kscm->inputtop] = stdin;
+	}*/
+	while (kscm->inputtop > 0 || kscm->inputs[kscm->inputtop] != stdin) {
+		fclose(kscm->inputs[kscm->inputtop]);
+		if (kscm->inputtop > 0) { // return to outer input
+			kscm->inputs[kscm->inputtop] = NULL;
+			kscm->inputtop--;
+		}
+		else { // go back to the top-level
+			kscm->inputs[kscm->inputtop] = stdin;
+			if (!kscm->quiet)
+				printf(KSCM_CONFIG_PROMPT);
+		}
 	}
 	kscm__clearinput(kscm);
 }
@@ -1340,10 +1366,14 @@ kscm_object_t kscm__opexe_0(kscm_t* kscm, register short op)
 		if (!kscm__isstring(kscm, kscm__car(kscm, kscm->args))) {
 			kscm__error_0(kscm, "load -- argument is not string");
 		}
-		if ((kscm->infp = fopen(kscm__strvalue(kscm, kscm__car(kscm, kscm->args)), "r")) == NULL) {
-			kscm->infp = stdin;
+		if (kscm->inputtop + 1 >= KSCM_CONFIG_MAXLOADS) {
+			kscm__error_0(kscm, "load -- depth of loaded files has reached the KSCM_CONFIG_MAXLOADS value");
+		}
+		if ((kscm->inputs[kscm->inputtop + 1] = fopen(kscm__strvalue(kscm, kscm__car(kscm, kscm->args)), "r")) == NULL) {
+			//kscm->inputs[kscm->inputtop] = stdin;
 			kscm__error_1(kscm, "Unable to open", kscm__car(kscm, kscm->args));
 		}
+		kscm->inputtop++;
 		if (!kscm->quiet)
 			fprintf(kscm->outfp, "loading %s", kscm__strvalue(kscm, kscm__car(kscm, kscm->args)));
 		kscm__s_goto(kscm, KSCM_OP_T0LVL);
@@ -1355,7 +1385,7 @@ kscm_object_t kscm__opexe_0(kscm_t* kscm, register short op)
 		kscm->envir = kscm->global_env;
 		kscm__s_save(kscm, KSCM_OP_VALUEPRINT, kscm->NIL, kscm->NIL);
 		kscm__s_save(kscm, KSCM_OP_T1LVL, kscm->NIL, kscm->NIL);
-		if (kscm->infp == stdin && !kscm->quiet)
+		if (kscm->inputs[kscm->inputtop] == stdin && !kscm->quiet)
 			printf(KSCM_CONFIG_PROMPT);
 		kscm__s_goto(kscm, KSCM_OP_READ);
 
@@ -2088,7 +2118,7 @@ kscm_object_t kscm__opexe_4(kscm_t* kscm, register short op)
 		}
 		else {
 			fprintf(kscm->outfp, "\n");
-			kscm__flushinput(kscm);
+			kscm__resetinput(kscm);
 			kscm->outfp = kscm->tmpfp;
 			kscm__s_goto(kscm, KSCM_OP_T0LVL);
 		}
@@ -3216,7 +3246,7 @@ void kscm__init_vars_global(kscm_t* kscm)
 	kscm_object_t x;
 
 	/* init input/output file */
-	kscm->infp = stdin;
+	kscm->inputs[kscm->inputtop] = stdin;
 	kscm->outfp = stdout;
 	/* init kscm->NIL */
 	kscm__type(kscm, kscm->NIL) = (KSCM_T_ATOM | KSCM_MARK);
@@ -3370,7 +3400,7 @@ void kscm__error(kscm_t* kscm, const char *fmt, const char *a, const char *b, co
 	fprintf(stderr, "Error: ");
 	fprintf(stderr, fmt, a, b, c);
 	fprintf(stderr, "\n");
-	kscm__flushinput(kscm);
+	kscm__resetinput(kscm);
 	longjmp(kscm->error_jmp, KSCM_OP_T0LVL);
 }
 

@@ -24,6 +24,10 @@
   <ItemGroup>
     <Text Include="init.scm" />
   </ItemGroup>
+  <ItemGroup>
+    <None Include="test.scm" />
+    <None Include="testlib.scm" />
+  </ItemGroup>
   <PropertyGroup Label="Globals">
     <VCProjectVersion>16.0</VCProjectVersion>
     <ProjectGuid>{EA7455B5-44EC-430D-8423-A4B2EC9937D3}</ProjectGuid>

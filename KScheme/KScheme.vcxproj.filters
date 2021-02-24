@@ -24,4 +24,12 @@
       <Filter>Source Files</Filter>
     </Text>
   </ItemGroup>
+  <ItemGroup>
+    <None Include="test.scm">
+      <Filter>Source Files</Filter>
+    </None>
+    <None Include="testlib.scm">
+      <Filter>Source Files</Filter>
+    </None>
+  </ItemGroup>
 </Project>
