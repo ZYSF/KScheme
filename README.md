@@ -12,7 +12,7 @@ It's based on Mini-Scheme, but has been updated and refactored mostly to make it
 It _does_ support:
 
  * Basic Scheme syntax - brackets, symbols, simple strings and numbers (see notes below about strings & numbers)
- * Basic modularity - `load` command works but only one level deep
+ * Basic modularity - `load` command works ~but only one level deep~
  * The most basic Scheme functions - `cons`, `car`, `cdr`, `lambda`, `display`, `+`, `-`, etc. should all work more-or-less as expected
  * `call-with-current-continuation` _is_ supported, and seems to work quite well (TODO: better tests)
  * Basic garbage collection is supported (see note below)
@@ -37,7 +37,8 @@ Things I'm looking at maybe adding soon:
  * A somewhat-proper test suite
  * Improved API for embedding (including factoring out malloc/stdio type calls into ones that can be managed by a larger program)
  * Some improved string/number/math/unicode support (ideally, this would be factored out so it can be disabled for low-resource environments, as the existing functionality might be "just enough" for many situations and in many cases the limitations can be worked around in Scheme code anyway)
- * Basic structure/array/object support (the main problem here is garbage collection, the current GC seems to work quite well but support for structures of arbitrary size might break some of it's assumptions and require some careful design)
+ * ~Basic structure/array/object support (the main problem here is garbage collection, the current GC seems to work quite well but support for structures of arbitrary size might break some of it's assumptions and require some careful design)~
+     - This is starting to be added now (buffer for byte arrays and "abstraction" for type-and-value pairs)
 
 ## Basic workarounds
 
