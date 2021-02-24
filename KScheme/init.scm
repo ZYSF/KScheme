@@ -1,5 +1,5 @@
 ; This is a init file for Mini-Scheme.
-; Some modifications by Zak Fenton MMXX for use in KScheme (removed any code with additional copyright notices)
+; Some modifications by Zak Fenton MMXX/MMXXI for use in KScheme (removed any code with additional copyright notices)
 
 ;; fake pre R^3 boolean values
 (define nil #f)
@@ -61,15 +61,15 @@
         (+ (fib (- i 2)) (fib (- i 1))))))
 
 (define (strpad str ext len)
-    (if (>= (strlen str) len)
+    (if (>= (string-length str) len)
         str
-        (strpad (strcat str ext) ext len)))
+        (strpad (string-cat str ext) ext len)))
 
 (define (fib-box i)
     (cons "fib-box" (strpad "" "I" i)))
 
 (define (fib-unbox b)
-    (strlen (cdr b)))
+    (string-length (cdr b)))
 
 (define (boxed-fib b)
     (if (< (fib-unbox b) 3)
@@ -78,6 +78,22 @@
             (+
                 (fib-unbox (boxed-fib (fib-box (- (fib-unbox b) 2))))
                 (fib-unbox (boxed-fib (fib-box (- (fib-unbox b) 1))))))))
+
+(define fib-type 'FIB-ABSTRACTION-TYPE)
+
+(define (fib-abstract i)
+    (abstraction-new fib-type (buffer-new i)))
+
+(define (fib-unabstract b)
+    (buffer-length (abstraction-value b)))
+
+(define (abstract-fib b)
+    (if (< (fib-unabstract b) 3)
+        (fib-abstract 1)
+        (fib-abstract
+            (+
+                (fib-unabstract (abstract-fib (fib-abstract (- (fib-unabstract b) 2))))
+                (fib-unabstract (abstract-fib (fib-abstract (- (fib-unabstract b) 1))))))))
 
 
 (define (tests-check name expected result)
@@ -152,5 +168,11 @@
     (let ((result (apply fast/ args)))
         (if result result (throw (cons 'math-error (cons '/ args))))))
 
-; This is a hook back to the internal parser, it'll be called when encountering a large number
+; This is a hook for the parser, a call to this function will be generated wherever it encounters an integer too large to parse
 (define (parse-number str) (throw (cons 'number-too-large str)))
+
+(macro example-macro (lambda (expr)
+    (display "This macro will expand to a hello world, but I got: ")
+    (display expr)
+    (display "\n")
+    '(display "Hello, world\n")))

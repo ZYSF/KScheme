@@ -37,8 +37,8 @@
   */
 #define KSCM_PLATFORM_BSD
 #define KSCM_PLUSPLUS
-// If KSCM_CONFIG_PRECISE is defined, overflow detection will occur in basic math functions
-#define KSCM_CONFIG_PRECISE
+// If KSCM_CONFIG_USE_PRECISE is defined, overflow detection will occur in basic math functions
+#define KSCM_CONFIG_USE_PRECISE
 // This just allows unsafe legacy C functions in Visual Studio. It should be disabled and fixed properly but not the highest priority.
 #define _CRT_SECURE_NO_WARNINGS
 
@@ -85,7 +85,7 @@ extern "C" {
 /*
  * Define or undefine following symbols as you need.
  */
-  #define VERBOSE 	/* define this if you want verbose GC */
+//  #define VERBOSE 	/* define this if you want verbose GC */
 #define	KSCM_CONFIG_AVOID_HACK_LOOP	/* define this if your compiler is poor
 			 * enougth to complain "do { } while (0)"
 			 * construction.
@@ -94,10 +94,10 @@ extern "C" {
 #define KSCM_CONFIG_USE_QQUOTE	/* undef this if you do not need quasiquote */
 #define KSCM_CONFIG_USE_MACRO	/* undef this if you do not need macro */
 #define KSCM_CONFIG_USE_PERSIST /* undef this if you do not need persistence */
+#define KSCM_CONFIG_USE_PRECISE	/* undef this if you do not need overflow detection and precise integer size */
+#define KSCM_CONFIG_USE_STRUCTS	/* undef this if you do not need additional structure types (buffers, vectors, etc.)*/
 
-// If KSCM_CONFIG_PRECISE is defined, overflow detection will occur in basic math functions
-#define KSCM_CONFIG_PRECISE
-#ifdef KSCM_CONFIG_PRECISE
+#ifdef KSCM_CONFIG_USE_PRECISE
 #include <stdint.h>
 #endif
 
@@ -347,8 +347,19 @@ error Please define your system type.
 
 #define KSCM_OP_STRCAT			104
 #define KSCM_OP_STRLEN			105
-#define KSCM_OP_SAVE_STATE		106
-#define KSCM_OP_RESUME_STATE	107
+#define KSCM_OP_STRGET			106
+#define KSCM_OP_SAVE_STATE		107
+#define KSCM_OP_RESUME_STATE	108
+#define KSCM_OP_BUFFER			109
+#define KSCM_OP_BUFFER_NEW		110
+#define KSCM_OP_BUFFER_LEN		111
+#define KSCM_OP_BUFFER_GET		112
+#define KSCM_OP_BUFFER_SET		113
+#define KSCM_OP_ABSTRACTION			114
+#define KSCM_OP_ABSTRACTION_NEW		115
+#define KSCM_OP_ABSTRACTION_TYPE		116
+#define KSCM_OP_ABSTRACTION_VALUE		117
+
 
 #define KSCM_TOK_LPAREN  0
 #define KSCM_TOK_RPAREN  1
@@ -381,6 +392,12 @@ struct kscm_cell {
 			struct kscm_cell* _car;
 			struct kscm_cell* _cdr;
 		} _cons;
+#ifdef KSCM_CONFIG_USE_STRUCTS
+		struct {
+			unsigned long _length;
+			unsigned char* _data;
+		} _buffer;
+#endif
 	} _object;
 };
 
@@ -394,6 +411,8 @@ typedef struct kscm_cell* kscm_object_t;
 #define KSCM_PERSIST_TCLOSURE		6
 #define KSCM_PERSIST_TSYNTAX		7
 #define KSCM_PERSIST_TCONTINUATION	8
+#define KSCM_PERSIST_TBUFFER		9
+#define KSCM_PERSIST_TABSTRACTION	10
 
 #define KSCM_T_STRING         1	/* 0000000000000001 */
 #define KSCM_T_NUMBER         2	/* 0000000000000010 */
@@ -404,9 +423,11 @@ typedef struct kscm_cell* kscm_object_t;
 #define KSCM_T_CLOSURE       64	/* 0000000001000000 */
 #define KSCM_T_CONTINUATION 128	/* 0000000010000000 */
 #ifdef KSCM_CONFIG_USE_MACRO
-# define KSCM_T_MACRO        256	/* 0000000100000000 */
+# define KSCM_T_MACRO        256/* 0000000100000000 */
 #endif
 #define KSCM_T_PROMISE      512	/* 0000001000000000 */
+#define KSCM_T_BUFFER		1024/* 0000010000000000 */
+#define KSCM_T_ABSTRACTION	2048/* 0000100000000000 */
 #define KSCM_T_ATOM       16384	/* 0100000000000000 */	/* only for gc */
 #define KSCM_CLRATOM      49151	/* 1011111111111111 */	/* only for gc */
 #define KSCM_MARK         32768	/* 1000000000000000 */
@@ -449,6 +470,11 @@ typedef struct kscm_cell* kscm_object_t;
 
 #define kscm__ispromise(kscm,p)    (kscm__type(kscm,p)&KSCM_T_PROMISE)
 #define kscm__setpromise(kscm,p)   kscm__type(kscm,p) |= KSCM_T_PROMISE
+
+#ifdef KSCM_CONFIG_USE_STRUCTS
+#define kscm__isbuffer(kscm,p)		(kscm__type(kscm,p)&KSCM_T_BUFFER)
+#define kscm__isabstraction(kscm,p)	(kscm__type(kscm,p)&KSCM_T_ABSTRACTION)
+#endif
 
 #define kscm__isatom(kscm,p)       (kscm__type(kscm,p)&KSCM_T_ATOM)
 #define kscm__setatom(kscm,p)      kscm__type(kscm,p) |= KSCM_T_ATOM
@@ -720,7 +746,30 @@ kscm_object_t kscm__mk_symbol(kscm_t* kscm, const char *name)
 	}
 }
 
-#ifdef KSCM_CONFIG_PRECISE
+#ifdef KSCM_CONFIG_USE_STRUCTS
+kscm_object_t kscm__mk_buffer(kscm_t* kscm, long len) {
+	void* d = calloc(1, len);
+	if (d == NULL) {
+		return kscm->NIL;
+	}
+	kscm_object_t result = kscm__get_cell(kscm, kscm->NIL, kscm->NIL);
+	kscm__type(kscm, result) = (KSCM_T_BUFFER | KSCM_T_ATOM);
+	result->_object._buffer._length = len;
+	result->_object._buffer._data = (unsigned char*) d;
+	return result;
+}
+kscm_object_t kscm__mk_abstraction(kscm_t* kscm, register kscm_object_t a, register kscm_object_t b)
+{
+	register kscm_object_t x = kscm__get_cell(kscm, a, b);
+
+	kscm__type(kscm, x) = KSCM_T_ABSTRACTION;
+	kscm__car(kscm, x) = a;
+	kscm__cdr(kscm, x) = b;
+	return (x);
+}
+#endif
+
+#ifdef KSCM_CONFIG_USE_PRECISE
 int kscm__safedigit(kscm_t* kscm, int base, char d) {
 	if (base <= 10) {
 		if (d >= '0' && d < '0' + base) {
@@ -796,7 +845,7 @@ kscm_object_t kscm__mk_atom(kscm_t* kscm, const char *q)
 	for (; (c = *p) != 0; ++p)
 		if (!isdigit(c))
 			return (kscm__mk_symbol(kscm, q));
-#ifdef KSCM_CONFIG_PRECISE
+#ifdef KSCM_CONFIG_USE_PRECISE
 	kscm_object_t result = kscm__mk_safenum(kscm, 10, q);
 	if (result == kscm->F) {
 		//fprintf(stderr, "WARNING: Math overflow in '%s'\n", q);
@@ -919,6 +968,14 @@ void kscm__gc(kscm_t* kscm, register kscm_object_t a, register kscm_object_t b)
 			if (kscm__ismark(kscm, p))
 				kscm__clrmark(kscm, p);
 			else {
+#ifdef KSCM_CONFIG_USE_STRUCTS
+				if (kscm__isbuffer(kscm, p)) {
+					if (p->_object._buffer._data != NULL) {
+						//fprintf(stderr, "Freeing a buffer of %d length\n", p->_object._buffer._length);
+						free(p->_object._buffer._data);
+					}
+				}
+#endif
 				kscm__type(kscm, p) = 0;
 				kscm__cdr(kscm, p) = kscm->free_cell;
 				kscm__car(kscm, p) = kscm->NIL;
@@ -1118,6 +1175,14 @@ int kscm__printatom(kscm_t* kscm, kscm_object_t l, int f)
 	}
 	else if (kscm__ismacro(kscm, l)) {
 		p = (char*)(void*)"#<MACRO>";
+#endif
+#ifdef KSCM_CONFIG_USE_STRUCTS
+	}
+	else if (kscm__isbuffer(kscm, l)) {
+		p = (char*)(void*)"#<BUFFER>";
+	}
+	else if (kscm__isabstraction(kscm, l)) {
+		p = (char*)(void*)"#<ABSTRACTION>";
 #endif
 	}
 	else if (kscm__isclosure(kscm, l))
@@ -1777,7 +1842,7 @@ kscm_object_t kscm__opexe_1(kscm_t* kscm, register short op)
 kscm_object_t kscm__opexe_2(kscm_t* kscm, register short op)
 {
 	register kscm_object_t x, y;
-#ifdef KSCM_CONFIG_PRECISE
+#ifdef KSCM_CONFIG_USE_PRECISE
 	int32_t v;
 #else
 	register long v;
@@ -1789,7 +1854,7 @@ kscm_object_t kscm__opexe_2(kscm_t* kscm, register short op)
 			if (!kscm__isnumber(kscm, kscm__car(kscm, x))) {
 				kscm__s_retbool(kscm, 0);
 			}
-#ifdef KSCM_CONFIG_PRECISE
+#ifdef KSCM_CONFIG_USE_PRECISE
 			int64_t lv = ((int64_t)v) + ((int64_t)kscm__ivalue(kscm, kscm__car(kscm, x)));
 			v = (int32_t)lv;
 			if (((int64_t)v) != lv) {
@@ -1806,7 +1871,7 @@ kscm_object_t kscm__opexe_2(kscm_t* kscm, register short op)
 			if (!kscm__isnumber(kscm, kscm__car(kscm, x))) {
 				kscm__s_retbool(kscm, 0);
 			}
-#ifdef KSCM_CONFIG_PRECISE
+#ifdef KSCM_CONFIG_USE_PRECISE
 			int64_t lv = ((int64_t)v) - ((int64_t)kscm__ivalue(kscm, kscm__car(kscm, x)));
 			v = (int32_t)lv;
 			if (((int64_t)v) != lv) {
@@ -1823,7 +1888,7 @@ kscm_object_t kscm__opexe_2(kscm_t* kscm, register short op)
 			if (!kscm__isnumber(kscm, kscm__car(kscm, x))) {
 				kscm__s_retbool(kscm, 0);
 			}
-#ifdef KSCM_CONFIG_PRECISE
+#ifdef KSCM_CONFIG_USE_PRECISE
 			int64_t lv = ((int64_t)v) * ((int64_t)kscm__ivalue(kscm, kscm__car(kscm, x)));
 			v = (int32_t)lv;
 			if (((int64_t)v) != lv) {
@@ -1843,7 +1908,7 @@ kscm_object_t kscm__opexe_2(kscm_t* kscm, register short op)
 			if (kscm__ivalue(kscm, kscm__car(kscm, x)) != 0)
 				v /= kscm__ivalue(kscm, kscm__car(kscm, x));
 			else {
-#ifdef KSCM_CONFIG_PRECISE
+#ifdef KSCM_CONFIG_USE_PRECISE
 				kscm__s_retbool(kscm, 0);
 #else
 				kscm__error_0(kscm, "Divided by zero");
@@ -1860,7 +1925,7 @@ kscm_object_t kscm__opexe_2(kscm_t* kscm, register short op)
 			if (kscm__ivalue(kscm, kscm__car(kscm, x)) != 0)
 				v %= kscm__ivalue(kscm, kscm__car(kscm, x));
 			else {
-#ifdef KSCM_CONFIG_PRECISE
+#ifdef KSCM_CONFIG_USE_PRECISE
 				kscm__s_retbool(kscm, 0);
 #else
 				kscm__error_0(kscm, "Divided by zero");
@@ -2413,11 +2478,10 @@ int kscm__fwrite_int(kscm_t* kscm, FILE* f, int val) {
 	fputc(((val >> 24) & 0xFF), f);
 	return 4;
 }
-int kscm__fwrite_str(kscm_t* kscm, FILE* f, const char* str) {
+int kscm__fwrite_strl(kscm_t* kscm, FILE* f, const char* str, int len) {
 	if (str == NULL) {
 		return kscm__fwrite_int(kscm, f, 0);
 	}
-	int len = strlen(str);
 	int written = kscm__fwrite_int(kscm, f, len);
 	if (written != 4) {
 		return written;
@@ -2428,6 +2492,9 @@ int kscm__fwrite_str(kscm_t* kscm, FILE* f, const char* str) {
 		written++;
 	}
 	return written;
+}
+int kscm__fwrite_str(kscm_t* kscm, FILE* f, const char* str) {
+	return kscm__fwrite_strl(kscm, f, str, strlen(str));
 }
 
 int kscm_save_state(kscm_t* kscm, const char* filename, const char* opts) {
@@ -2541,6 +2608,25 @@ int kscm_save_state(kscm_t* kscm, const char* filename, const char* opts) {
 					kscm__fwrite_int(kscm, f, kscm_get_persistent_address(kscm, kscm__car(kscm, obj)));
 					kscm__fwrite_int(kscm, f, kscm_get_persistent_address(kscm, kscm__cdr(kscm, obj)));
 				}
+#ifdef KSCM_CONFIG_USE_STRUCTS
+				else if (kscm__isabstraction(kscm, obj)) {
+					if (kscm__isatom(kscm, obj)) {
+						fprintf(stderr, "abstraction is atom\n");
+						exit(-1);
+					}
+					kscm__fwrite_byte(kscm, f, KSCM_PERSIST_TABSTRACTION);
+					kscm__fwrite_int(kscm, f, kscm_get_persistent_address(kscm, kscm__car(kscm, obj)));
+					kscm__fwrite_int(kscm, f, kscm_get_persistent_address(kscm, kscm__cdr(kscm, obj)));
+				}
+				else if (kscm__isbuffer(kscm, obj)) {
+					if (!kscm__isatom(kscm, obj)) {
+						fprintf(stderr, "buffer isn't atom\n");
+						exit(-1);
+					}
+					kscm__fwrite_byte(kscm, f, KSCM_PERSIST_TBUFFER);
+					kscm__fwrite_strl(kscm, f, (const char*)obj->_object._buffer._data, obj->_object._buffer._length);
+				}
+#endif
 				else {
 					fprintf(stderr, "Object at %d:%d is non-free but unknown type: %d\n", s, i, obj->_flag);
 					return -1; // Not saved
@@ -2777,6 +2863,28 @@ int kscm_resume_state(kscm_t* kscm, const char* filename, const char* opts) {
 			kscm__fread_int(kscm, f, &tmpint);
 			obj->_object._cons._cdr = kscm_get_object_address(kscm, tmpint);
 			break;
+#ifdef KSCM_CONFIG_USE_STRUCTS
+		case KSCM_PERSIST_TABSTRACTION:
+			obj->_flag = KSCM_T_ABSTRACTION;
+			kscm__fread_int(kscm, f, &tmpint);
+			obj->_object._cons._car = kscm_get_object_address(kscm, tmpint);
+			kscm__fread_int(kscm, f, &tmpint);
+			obj->_object._cons._cdr = kscm_get_object_address(kscm, tmpint);
+			break;
+		case KSCM_PERSIST_TBUFFER:
+			obj->_flag = KSCM_T_BUFFER | KSCM_T_ATOM;
+			tmpint = kscm__fread_str(kscm, f, &tmpstr);
+			obj->_object._buffer._length = tmpint;
+			if (tmpint < 0) {
+				fprintf(stderr, "WTFERR4\n");
+				exit(-1);
+				return -1;
+			}
+			//fprintf(stderr, "Got str len %d '%s'\n", tmpint, tmpstr);
+			obj->_object._buffer._data = (unsigned char*) tmpstr; //kscm__store_string(kscm, tmpstr);
+			//free((void*)tmpstr);
+			break;
+#endif
 		default:
 			fprintf(stderr, "Unknown object type #%d\n", typ);
 			exit(1);
@@ -2804,9 +2912,15 @@ kscm_object_t kscm__opexe_7(kscm_t* kscm, register short op)
 	case KSCM_OP_STRCAT:
 		x = kscm__car(kscm, kscm->args);
 		y = kscm__cadr(kscm, kscm->args);
+		if (!kscm__isstring(kscm, x) || !kscm__isstring(kscm, y)) {
+			kscm__s_retbool(kscm, 0);
+		}
 		str1 = kscm__strvalue(kscm, x);
 		str2 = kscm__strvalue(kscm, y);
 		str3 = (char*)calloc(strlen(str1) + strlen(str2) + 1, 1);
+		if (str3 == NULL) {
+			kscm__s_retbool(kscm, 0);
+		}
 		strcat(str3, str1);
 		strcat(str3, str2);
 		z = kscm__mk_string(kscm, str3);
@@ -2814,8 +2928,23 @@ kscm_object_t kscm__opexe_7(kscm_t* kscm, register short op)
 		kscm__s_return(kscm, z);
 	case KSCM_OP_STRLEN:
 		x = kscm__car(kscm, kscm->args);
+		if (!kscm__isstring(kscm, x)) {
+			kscm__s_retbool(kscm, 0);
+		}
 		str1 = kscm__strvalue(kscm, x);
 		kscm__s_return(kscm, kscm__mk_number(kscm, strlen(str1)));
+	case KSCM_OP_STRGET:
+		x = kscm__car(kscm, kscm->args);
+		y = kscm__cadr(kscm, kscm->args);
+		if (!kscm__isstring(kscm, x) || !kscm__isnumber(kscm, y)) {
+			kscm__s_retbool(kscm, 0);
+		}
+		str1 = kscm__strvalue(kscm, x);
+		v = kscm__ivalue(kscm, y);
+		if (v < 0 || v >= strlen(str1)) {
+			kscm__s_retbool(kscm, 0);
+		}
+		kscm__s_return(kscm, kscm__mk_number(kscm, ((int)str1[v]) & 0xFF));
 #ifdef KSCM_CONFIG_USE_PERSIST
 	case KSCM_OP_SAVE_STATE:
 		x = kscm__car(kscm, kscm->args);
@@ -2837,6 +2966,64 @@ kscm_object_t kscm__opexe_7(kscm_t* kscm, register short op)
 		} else {
 			kscm__s_retbool(kscm, 0);
 		}
+#endif
+#ifdef KSCM_CONFIG_USE_STRUCTS
+	case KSCM_OP_BUFFER:
+		kscm__s_retbool(kscm, kscm__isbuffer(kscm, kscm__car(kscm, kscm->args)));
+	case KSCM_OP_BUFFER_NEW:
+		x = kscm__car(kscm, kscm->args);
+		if (!kscm__isnumber(kscm, x)) {
+			kscm__s_return(kscm, kscm->NIL);
+		}
+		kscm__s_return(kscm, kscm__mk_buffer(kscm, kscm__ivalue(kscm, x)));
+	case KSCM_OP_BUFFER_LEN:
+		x = kscm__car(kscm, kscm->args);
+		if (!kscm__isbuffer(kscm, x)) {
+			kscm__s_return(kscm, kscm->F);
+		}
+		kscm__s_return(kscm, kscm__mk_number(kscm, x->_object._buffer._length));
+	case KSCM_OP_BUFFER_GET:
+		x = kscm__car(kscm, kscm->args);
+		y = kscm__cadr(kscm, kscm->args);
+		if (!kscm__isbuffer(kscm, x) || !kscm__isnumber(kscm, y)) {
+			kscm__s_return(kscm, kscm->F);
+		}
+		v = kscm__ivalue(kscm, y);
+		if (v < 0 || v >= x->_object._buffer._length) {
+			kscm__s_return(kscm, kscm->F);
+		}
+		kscm__s_return(kscm, kscm__mk_number(kscm, ((long)x->_object._buffer._data[v]) & 0xFF));
+	case KSCM_OP_BUFFER_SET:
+		x = kscm__car(kscm, kscm->args);
+		y = kscm__cadr(kscm, kscm->args);
+		z = kscm__caddr(kscm, kscm->args);
+		if (!kscm__isbuffer(kscm, x) || !kscm__isnumber(kscm, y) || !kscm__isnumber(kscm, z)) {
+			kscm__s_return(kscm, kscm->F);
+		}
+		v = kscm__ivalue(kscm, y);
+		if (v < 0 || v >= x->_object._buffer._length) {
+			kscm__s_return(kscm, kscm->F);
+		}
+		x->_object._buffer._data[v] = (unsigned char)kscm__ivalue(kscm, z);
+		kscm__s_return(kscm, kscm->T);
+	case KSCM_OP_ABSTRACTION:
+		kscm__s_retbool(kscm, kscm__isabstraction(kscm, kscm__car(kscm, kscm->args)));
+	case KSCM_OP_ABSTRACTION_NEW:
+		x = kscm__car(kscm, kscm->args);
+		y = kscm__cadr(kscm, kscm->args);
+		kscm__s_return(kscm, kscm__mk_abstraction(kscm, x, y));
+	case KSCM_OP_ABSTRACTION_TYPE:
+		x = kscm__car(kscm, kscm->args);
+		if (!kscm__isabstraction(kscm, x)) {
+			kscm__s_retbool(kscm, 0);
+		}
+		kscm__s_return(kscm, kscm__car(kscm, x));
+	case KSCM_OP_ABSTRACTION_VALUE:
+		x = kscm__car(kscm, kscm->args);
+		if (!kscm__isabstraction(kscm, x)) {
+			kscm__s_retbool(kscm, 0);
+		}
+		kscm__s_return(kscm, kscm__cdr(kscm, x));
 #endif
 	default:
 		sprintf(kscm->strbuff, "%d is illegal operator", kscm->_operator);
@@ -2962,8 +3149,18 @@ kscm_object_t(*kscm__shared_dispatch_table[])(kscm_t* kscm, register short op) =
 //#endif Removed ifdef to keep ordering consistent. -Zak.
 	&kscm__opexe_7, /* KSCM_OP_STRCAT, */
 	&kscm__opexe_7, /* KSCM_OP_STRLEN, */
+	&kscm__opexe_7, /* KSCM_OP_STRGET, */
 	&kscm__opexe_7, /* KSCM_OP_SAVE_STATE, */
 	&kscm__opexe_7, /* KSCM_OP_RESUME_STATE, */
+	&kscm__opexe_7, /* KSCM_OP_BUFFER, */
+	&kscm__opexe_7, /* KSCM_OP_BUFFER_NEW, */
+	&kscm__opexe_7, /* KSCM_OP_BUFFER_LEN, */
+	&kscm__opexe_7, /* KSCM_OP_BUFFER_GET, */
+	&kscm__opexe_7, /* KSCM_OP_BUFFER_SET, */
+	&kscm__opexe_7, /* KSCM_OP_ABSTRACTION, */
+	&kscm__opexe_7, /* KSCM_OP_ABSTRACTION_NEW, */
+	&kscm__opexe_7, /* KSCM_OP_ABSTRACTION_LEN, */
+	&kscm__opexe_7, /* KSCM_OP_ABSTRACTION_GET, */
 };
 
 /* These and the commented-out parts of kscm__eval_cycle can be re-enabled if you need to make sure the interpreter is running.
@@ -3118,11 +3315,23 @@ void kscm__init_procs(kscm_t* kscm)
 #ifdef KSCM_CONFIG_USE_MACRO
 	kscm__mk_proc(kscm, KSCM_OP_MACROP, "macro?");	/* a.k */
 #endif
-	kscm__mk_proc(kscm, KSCM_OP_STRCAT, "strcat");
-	kscm__mk_proc(kscm, KSCM_OP_STRLEN, "strlen");
+	kscm__mk_proc(kscm, KSCM_OP_STRCAT, "string-cat");
+	kscm__mk_proc(kscm, KSCM_OP_STRLEN, "string-length");
+	kscm__mk_proc(kscm, KSCM_OP_STRGET, "string-get");
 #ifdef KSCM_CONFIG_USE_PERSIST
 	kscm__mk_proc(kscm, KSCM_OP_SAVE_STATE, "save-state");
 	kscm__mk_proc(kscm, KSCM_OP_RESUME_STATE, "resume-state");
+#endif
+#ifdef KSCM_CONFIG_USE_STRUCTS
+	kscm__mk_proc(kscm, KSCM_OP_BUFFER, "buffer?");
+	kscm__mk_proc(kscm, KSCM_OP_BUFFER_NEW, "buffer-new");
+	kscm__mk_proc(kscm, KSCM_OP_BUFFER_LEN, "buffer-length");
+	kscm__mk_proc(kscm, KSCM_OP_BUFFER_GET, "buffer-get");
+	kscm__mk_proc(kscm, KSCM_OP_BUFFER_SET, "buffer-set!");
+	kscm__mk_proc(kscm, KSCM_OP_ABSTRACTION, "abstraction?");
+	kscm__mk_proc(kscm, KSCM_OP_ABSTRACTION_NEW, "abstraction-new");
+	kscm__mk_proc(kscm, KSCM_OP_ABSTRACTION_TYPE, "abstraction-type");
+	kscm__mk_proc(kscm, KSCM_OP_ABSTRACTION_VALUE, "abstraction-value");
 #endif
 	kscm__mk_proc(kscm, KSCM_OP_QUIT, "quit");
 }
