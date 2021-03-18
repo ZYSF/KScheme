@@ -96,6 +96,7 @@ extern "C" {
 #define KSCM_CONFIG_USE_PERSIST /* undef this if you do not need persistence */
 #define KSCM_CONFIG_USE_PRECISE	/* undef this if you do not need overflow detection and precise integer size */
 #define KSCM_CONFIG_USE_STRUCTS	/* undef this if you do not need additional structure types (buffers, vectors, etc.)*/
+#define KSCM_CONFIG_USE_FLOATS  /* undef this if you do not need floating-point functionality (i.e. undefine this if you're running in kernel mode) */
 
 #define KSCM_CONFIG_MAXLOADS 20 /* the maximum depth of the load stack */
 
@@ -381,14 +382,14 @@ typedef struct kscm kscm_t;
 
 /* cell structure */
 struct kscm_cell {
-	unsigned short _flag;
+	unsigned long _flag; // TODO: This should probably always be 32-bit
 	union {
 		struct {
 			char* _svalue;
 			short   _keynum;
 		} _string;
 		struct {
-			long    _ivalue;
+			long    _ivalue; // TODO: This should probably always be 32-bit, i.e. representing a flexible "small int" value
 		} _number;
 		struct {
 			struct kscm_cell* _car;
@@ -399,6 +400,11 @@ struct kscm_cell {
 			unsigned long _length;
 			unsigned char* _data;
 		} _buffer;
+#endif
+#ifdef KSCM_CONFIG_USE_FLOATS
+		struct {
+			double _dvalue;
+		} _float64;
 #endif
 	} _object;
 };
@@ -415,6 +421,11 @@ typedef struct kscm_cell* kscm_object_t;
 #define KSCM_PERSIST_TCONTINUATION	8
 #define KSCM_PERSIST_TBUFFER		9
 #define KSCM_PERSIST_TABSTRACTION	10
+#define KSCM_PERSIST_TVECTOR_RESERVED	11
+#define KSCM_PERSIST_TFLOAT32_RESERVED	12
+#define KSCM_PERSIST_TFLOAT64		13
+#define KSCM_PERSIST_TUINT64_RESERVED	14
+#define KSCM_PERSIST_TINT64_RESERVED	15
 
 #define KSCM_T_STRING         1	/* 0000000000000001 */
 #define KSCM_T_NUMBER         2	/* 0000000000000010 */
@@ -430,6 +441,8 @@ typedef struct kscm_cell* kscm_object_t;
 #define KSCM_T_PROMISE      512	/* 0000001000000000 */
 #define KSCM_T_BUFFER		1024/* 0000010000000000 */
 #define KSCM_T_ABSTRACTION	2048/* 0000100000000000 */
+#define KSCM_T_RESERVED		4096/* 0001000000000000 */
+#define KSCM_T_FLOAT64		8192/* 0010000000000000 */
 #define KSCM_T_ATOM       16384	/* 0100000000000000 */	/* only for gc */
 #define KSCM_CLRATOM      49151	/* 1011111111111111 */	/* only for gc */
 #define KSCM_MARK         32768	/* 1000000000000000 */
@@ -444,6 +457,11 @@ typedef struct kscm_cell* kscm_object_t;
 
 #define kscm__isnumber(kscm,p)     (kscm__type(kscm, p)&KSCM_T_NUMBER)
 #define kscm__ivalue(kscm,p)       ((p)->_object._number._ivalue)
+
+#ifdef KSCM_CONFIG_USE_FLOATS
+#define kscm__isfloat64(kscm,p)     (kscm__type(kscm, p)&KSCM_T_FLOAT64)
+#define kscm__dvalue(kscm,p)       ((p)->_object._float64._dvalue)
+#endif
 
 #define kscm__ispair(kscm,p)       (kscm__type(kscm,p)&KSCM_T_PAIR)
 #define kscm__car(kscm,p)          ((p)->_object._cons._car)
@@ -687,6 +705,17 @@ kscm_object_t kscm__mk_number(kscm_t* kscm, register long num)
 	return (x);
 }
 
+#ifdef KSCM_CONFIG_USE_FLOATS
+kscm_object_t kscm__mk_float64(kscm_t* kscm, double value) {
+	kscm_object_t x = kscm__get_cell(kscm, kscm->NIL, kscm->NIL);
+
+	kscm__type(kscm, x) = (KSCM_T_FLOAT64 | KSCM_T_ATOM);
+	x->_object._float64._dvalue = value;
+
+	return x;
+}
+#endif
+
 /* allocate name to string area */
 char* kscm__store_string(kscm_t* kscm, const char *name)
 {
@@ -846,9 +875,36 @@ kscm_object_t kscm__mk_atom(kscm_t* kscm, const char *q)
 		if ((c != '+' && c != '-') || !isdigit(*p))
 			return (kscm__mk_symbol(kscm, q));
 	}
+#ifdef KSCM_CONFIG_USE_FLOATS
+	bool isFloat = false;
+	bool hasE = false;
+	bool hasESign = false;
+	char prev = ' ';
+	for (; (c = *p) != 0; ++p) {
+		if (!isdigit(c)) {
+			if (!isFloat && c == '.') {
+				isFloat = true;
+			}
+			else if (isFloat && !hasE && (c == 'e' || c == 'E')) {
+				hasE = true;
+			}
+			else if (isFloat && hasE && (prev == 'e' || prev == 'E') && (c == '+' || c == '-')) {
+				hasESign = true;
+			}
+			else {
+				return (kscm__mk_symbol(kscm, q));
+			}
+		}
+		prev = c;
+	}
+	if (isFloat) {
+		return kscm__mk_float64(kscm, atof(q));
+	}
+#else
 	for (; (c = *p) != 0; ++p)
 		if (!isdigit(c))
 			return (kscm__mk_symbol(kscm, q));
+#endif
 #ifdef KSCM_CONFIG_USE_PRECISE
 	kscm_object_t result = kscm__mk_safenum(kscm, 10, q);
 	if (result == kscm->F) {
@@ -1183,6 +1239,10 @@ int kscm__printatom(kscm_t* kscm, kscm_object_t l, int f)
 	else if (kscm__isnumber(kscm, l)) {
 		p = kscm->strbuff;
 		sprintf(p, "%ld", kscm__ivalue(kscm, l));
+	}
+	else if (kscm__isfloat64(kscm, l)) {
+		p = kscm->strbuff;
+		sprintf(p, "%f", l->_object._float64._dvalue);
 	}
 	else if (kscm__isstring(kscm, l)) {
 		if (!f)
@@ -2657,6 +2717,21 @@ int kscm_save_state(kscm_t* kscm, const char* filename, const char* opts) {
 					kscm__fwrite_strl(kscm, f, (const char*)obj->_object._buffer._data, obj->_object._buffer._length);
 				}
 #endif
+#ifdef KSCM_CONFIG_USE_FLOATS
+				else if (kscm__isfloat64(kscm, obj)) {
+					char* bytes = (char*)(void*)&obj->_object._float64._dvalue;
+					kscm__fwrite_byte(kscm, f, KSCM_PERSIST_TFLOAT64);
+					// NOTE: This assumes floating-point endian is the same on all platforms
+					kscm__fwrite_byte(kscm, f, bytes[0]);
+					kscm__fwrite_byte(kscm, f, bytes[1]);
+					kscm__fwrite_byte(kscm, f, bytes[2]);
+					kscm__fwrite_byte(kscm, f, bytes[3]);
+					kscm__fwrite_byte(kscm, f, bytes[4]);
+					kscm__fwrite_byte(kscm, f, bytes[5]);
+					kscm__fwrite_byte(kscm, f, bytes[6]);
+					kscm__fwrite_byte(kscm, f, bytes[7]);
+				}
+#endif
 				else {
 					fprintf(stderr, "Object at %d:%d is non-free but unknown type: %d\n", s, i, obj->_flag);
 					return -1; // Not saved
@@ -2914,6 +2989,20 @@ int kscm_resume_state(kscm_t* kscm, const char* filename, const char* opts) {
 			obj->_object._buffer._data = (unsigned char*) tmpstr; //kscm__store_string(kscm, tmpstr);
 			//free((void*)tmpstr);
 			break;
+#endif
+#ifdef KSCM_CONFIG_USE_FLOATS
+		case KSCM_PERSIST_TFLOAT64: {
+			obj->_flag = KSCM_T_FLOAT64 | KSCM_T_ATOM;
+			char* bytes = (char*)(void*)&obj->_object._float64._dvalue;
+			kscm__fread_byte(kscm, f, &bytes[0]);
+			kscm__fread_byte(kscm, f, &bytes[1]);
+			kscm__fread_byte(kscm, f, &bytes[2]);
+			kscm__fread_byte(kscm, f, &bytes[3]);
+			kscm__fread_byte(kscm, f, &bytes[4]);
+			kscm__fread_byte(kscm, f, &bytes[5]);
+			kscm__fread_byte(kscm, f, &bytes[6]);
+			kscm__fread_byte(kscm, f, &bytes[7]);
+		} break;
 #endif
 		default:
 			fprintf(stderr, "Unknown object type #%d\n", typ);
