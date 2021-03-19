@@ -1121,6 +1121,11 @@ void kscm__gc(kscm_t* kscm, register kscm_object_t a, register kscm_object_t b)
 	kscm__mark(kscm, kscm->code);
 	kscm__mark(kscm, kscm->dump);
 
+	/* mark thread values (this implementation is single-threaded but we keep them anyway) */
+	kscm__mark(kscm, kscm->_threadname);
+	kscm__mark(kscm, kscm->_threadopts);
+	kscm__mark(kscm, kscm->_threadobject);
+
 	/* mark variables a, b */
 	kscm__mark(kscm, a);
 	kscm__mark(kscm, b);
