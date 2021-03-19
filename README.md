@@ -1,11 +1,17 @@
 # KScheme
-An updated &amp; refactored version of Mini-Scheme, a public domain Scheme interpreter.
+An updated & refactored version of Mini-Scheme, a public domain Scheme interpreter.
 
 ## Introduction
 
 This is about as simple of an implementation of Scheme (a very flexible LISP-like programming language) as you'll find.
 
 It's based on Mini-Scheme, but has been updated and refactored mostly to make it compile and work properly under modern compilers and operating systems (it should build out-of-the-box on Visual Studio 2019).
+
+## NOTE
+
+Documentation is rather lacking, I've added a lot of features since Mini-Scheme so new documentation is needed.
+
+For now, you'll have to have a look through the C++ source and the `init.scm` file to get an idea of what standard functions are available and what they do. Most of the new features are implemented as optional extensions, so they can be disabled at build-time. Feature/version detection from Scheme code is also planned but not implemented yet.
 
 ## Some notes on features & limitations
 
