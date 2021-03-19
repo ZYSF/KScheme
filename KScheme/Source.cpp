@@ -135,7 +135,7 @@ extern "C" {
 #define KSCM_CONFIG_BANNER "Hello, This is KScheme (kscm) 0.1, based on Mini-Scheme Interpreter Version 0.85p1.\n"
 
 #define KSCM_CONFIG_PERSIST_MAGIC	"KSCM"
-#define KSCM_CONFIG_PERSIST_VERSION	1
+#define KSCM_CONFIG_PERSIST_VERSION	2
 
 #include <stdio.h>
 #include <ctype.h>
@@ -541,11 +541,23 @@ struct kscm {
 	char* str_seg[KSCM_CONFIG_STR_NSEGMENT];
 	int     str_seglast;// = -1;
 
-	/* We use 4 registers. */
+	/* We use 4 registers (actually, some more registers are used internally). */
 	kscm_object_t args;			/* register for arguments of function */
 	kscm_object_t envir;			/* stack register for current environment */
 	kscm_object_t code;			/* register for current code */
 	kscm_object_t dump;			/* stack register for next evaluation */
+
+	/* The VM is currently single-threaded, but to facilitate compatibility with future/other versions
+	 * some information is associated with the "main thread" as though it were one thread in a multi-threaded
+	 * environment.
+	 */
+	int _threadstate;
+	kscm_object_t _threadname;
+	kscm_object_t _threadopts;
+	kscm_object_t _threadobject;
+
+	/* Right now, the state format just contains the number of bytes per reference (either 4 or 8). */
+	int _stateformat;
 
 	struct kscm_cell _NIL;
 	kscm_object_t NIL;// = &_NIL;		/* special cell representing empty cell */
@@ -646,6 +658,7 @@ int kscm__alloc_strseg(kscm_t* kscm, int n)
 void kscm__fatal_error(kscm_t* kscm, const char* msg, const char* a, const char* b, const char* c);
 void kscm__error(kscm_t* kscm, const char* msg, const char* a, const char* b, const char* c);
 void kscm__init_globals(kscm_t* kscm);
+kscm_object_t kscm__mk_string(kscm_t* kscm, const char* str);
 
 /* initialization of Mini-Scheme */
 void kscm__init_scheme(kscm_t* kscm)
@@ -669,6 +682,11 @@ void kscm__init_scheme(kscm_t* kscm)
 #else
 	kscm->gc_verbose = 0;
 #endif
+	kscm->_stateformat = 4;
+	kscm->_threadstate = 1;
+	kscm->_threadobject = kscm->NIL;
+	kscm->_threadname = kscm__mk_string(kscm, "main");
+	kscm->_threadopts = kscm__mk_string(kscm, "");
 	kscm__init_globals(kscm);
 }
 
@@ -2706,15 +2724,13 @@ int kscm_save_state(kscm_t* kscm, const char* filename, const char* opts) {
 	kscm__fwrite_str(kscm, f, KSCM_CONFIG_PERSIST_MAGIC);
 	//fclose(f); if (1) return 0;
 	kscm__fwrite_int(kscm, f, KSCM_CONFIG_PERSIST_VERSION);
+	
+	// Bytes per id (higher bits may be reused later for flags)
+	kscm__fwrite_int(kscm, f, kscm->_stateformat);
 
 	kscm__fwrite_int(kscm, f, kscm_get_persistent_address(kscm, kscm->NIL));
 	kscm__fwrite_int(kscm, f, kscm_get_persistent_address(kscm, kscm->F));
 	kscm__fwrite_int(kscm, f, kscm_get_persistent_address(kscm, kscm->T));
-
-	kscm__fwrite_int(kscm, f, kscm_get_persistent_address(kscm, kscm->args));
-	kscm__fwrite_int(kscm, f, kscm_get_persistent_address(kscm, kscm->envir));
-	kscm__fwrite_int(kscm, f, kscm_get_persistent_address(kscm, kscm->code));
-	kscm__fwrite_int(kscm, f, kscm_get_persistent_address(kscm, kscm->dump));
 
 	kscm__fwrite_int(kscm, f, kscm_get_persistent_address(kscm, kscm->oblist));
 	kscm__fwrite_int(kscm, f, kscm_get_persistent_address(kscm, kscm->global_env));
@@ -2724,7 +2740,23 @@ int kscm_save_state(kscm_t* kscm, const char* filename, const char* opts) {
 	kscm__fwrite_int(kscm, f, kscm_get_persistent_address(kscm, kscm->QQUOTE));
 	kscm__fwrite_int(kscm, f, kscm_get_persistent_address(kscm, kscm->UNQUOTE));
 	kscm__fwrite_int(kscm, f, kscm_get_persistent_address(kscm, kscm->UNQUOTESP));
+
+	/* NOTE: The format has been reorganised (as of "version 2" of the format) to allow for
+	 * multithreading, which isn't supported on this implementation, but now thread-specific
+	 * data is stored separately.
+	 */
+	/* Begin by writing the number of threads (always 1, for now). */
+	kscm__fwrite_int(kscm, f, 1);
+	kscm__fwrite_int(kscm, f, kscm->_threadstate);
+	kscm__fwrite_int(kscm, f, kscm_get_persistent_address(kscm, kscm->_threadname));
+	kscm__fwrite_int(kscm, f, kscm_get_persistent_address(kscm, kscm->_threadopts));
+	kscm__fwrite_int(kscm, f, kscm_get_persistent_address(kscm, kscm->_threadobject));
+	kscm__fwrite_int(kscm, f, kscm_get_persistent_address(kscm, kscm->args));
+	kscm__fwrite_int(kscm, f, kscm_get_persistent_address(kscm, kscm->envir));
+	kscm__fwrite_int(kscm, f, kscm_get_persistent_address(kscm, kscm->code));
+	kscm__fwrite_int(kscm, f, kscm_get_persistent_address(kscm, kscm->dump));
 	kscm__fwrite_int(kscm, f, kscm_get_persistent_address(kscm, kscm->value));
+	kscm__fwrite_int(kscm, f, kscm->_operator);
 
 	//fprintf(stderr, "Persistent addresses: ->T=%d ->F=%d ->NIL=%d\n", kscm_get_persistent_address(kscm, kscm->T), kscm_get_persistent_address(kscm, kscm->F), kscm_get_persistent_address(kscm, kscm->NIL));
 
@@ -2952,6 +2984,12 @@ int kscm_resume_state(kscm_t* kscm, const char* filename, const char* opts) {
 		return -1;
 	}
 	kscm__fread_int(kscm, f, &tmpint);
+	if (tmpint != 4) {
+		fprintf(stderr, "Failed to read '%s': Bad format options, expected 4 but got %d\n", filename, tmpint);
+		return -1;
+	}
+	kscm->_stateformat = tmpint;
+	kscm__fread_int(kscm, f, &tmpint);
 	if (tmpint != 0) {
 		fprintf(stderr, "Failed to read '%s': Bad NIL index, expected %d but got %d\n", filename, 0, tmpint);
 		return -1;
@@ -2968,15 +3006,6 @@ int kscm_resume_state(kscm_t* kscm, const char* filename, const char* opts) {
 	}
 
 	kscm__fread_int(kscm, f, &tmpint);
-	kscm->args = kscm_get_object_address(kscm, tmpint);
-	kscm__fread_int(kscm, f, &tmpint);
-	kscm->envir = kscm_get_object_address(kscm, tmpint);
-	kscm__fread_int(kscm, f, &tmpint);
-	kscm->code = kscm_get_object_address(kscm, tmpint);
-	kscm__fread_int(kscm, f, &tmpint);
-	kscm->dump = kscm_get_object_address(kscm, tmpint);
-
-	kscm__fread_int(kscm, f, &tmpint);
 	kscm->oblist = kscm_get_object_address(kscm, tmpint);
 	kscm__fread_int(kscm, f, &tmpint);
 	kscm->global_env = kscm_get_object_address(kscm, tmpint);
@@ -2991,8 +3020,49 @@ int kscm_resume_state(kscm_t* kscm, const char* filename, const char* opts) {
 	kscm->UNQUOTE = kscm_get_object_address(kscm, tmpint);
 	kscm__fread_int(kscm, f, &tmpint);
 	kscm->UNQUOTESP = kscm_get_object_address(kscm, tmpint);
+
 	kscm__fread_int(kscm, f, &tmpint);
-	kscm->value = kscm_get_object_address(kscm, tmpint);
+	if (tmpint != 1) {
+		fprintf(stderr, "Failed to read '%s': Bad number of threads, this VM only supports 1 thread but got %d\n", filename, tmpint);
+		return -1;
+	}
+	/*
+	
+	kscm__fwrite_int(kscm, f, 1);
+	kscm__fwrite_int(kscm, f, kscm->_threadstate);
+	kscm__fwrite_int(kscm, f, kscm_get_persistent_address(kscm, kscm->_threadname));
+	kscm__fwrite_int(kscm, f, kscm_get_persistent_address(kscm, kscm->_threadopts));
+	kscm__fwrite_int(kscm, f, kscm_get_persistent_address(kscm, kscm->_threadobject));
+	kscm__fwrite_int(kscm, f, kscm_get_persistent_address(kscm, kscm->args));
+	kscm__fwrite_int(kscm, f, kscm_get_persistent_address(kscm, kscm->envir));
+	kscm__fwrite_int(kscm, f, kscm_get_persistent_address(kscm, kscm->code));
+	kscm__fwrite_int(kscm, f, kscm_get_persistent_address(kscm, kscm->dump));
+	kscm__fwrite_int(kscm, f, kscm_get_persistent_address(kscm, kscm->value));
+	kscm__fwrite_int(kscm, f, kscm->_operator);
+	*/
+
+	kscm__fread_int(kscm, f, &tmpint);
+	kscm->_threadstate = tmpint;
+	kscm__fread_int(kscm, f, &tmpint);
+	kscm->_threadname = kscm_get_object_address(kscm, tmpint);
+	kscm__fread_int(kscm, f, &tmpint);
+	kscm->_threadopts = kscm_get_object_address(kscm, tmpint);
+	kscm__fread_int(kscm, f, &tmpint);
+	kscm->_threadobject = kscm_get_object_address(kscm, tmpint);
+	kscm__fread_int(kscm, f, &tmpint);
+	kscm->args = kscm_get_object_address(kscm, tmpint);
+	kscm__fread_int(kscm, f, &tmpint);
+	kscm->envir = kscm_get_object_address(kscm, tmpint);
+	kscm__fread_int(kscm, f, &tmpint);
+	kscm->code = kscm_get_object_address(kscm, tmpint);
+	kscm__fread_int(kscm, f, &tmpint);
+	kscm->dump = kscm_get_object_address(kscm, tmpint);
+	
+	/* At least for the main thread, the value/operator options are discarded. */
+	kscm__fread_int(kscm, f, &tmpint);
+	kscm__fread_int(kscm, f, &tmpint);
+	kscm->value = kscm->NIL; //kscm_get_object_address(kscm, tmpint);
+	kscm->_operator = 0;
 
 	//fprintf(stderr, "Persistent addresses: ->T=%d ->F=%d ->NIL=%d\n", kscm_get_persistent_address(kscm, kscm->T), kscm_get_persistent_address(kscm, kscm->F), kscm_get_persistent_address(kscm, kscm->NIL));
 
