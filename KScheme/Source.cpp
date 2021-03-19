@@ -95,8 +95,9 @@ extern "C" {
 #define KSCM_CONFIG_USE_MACRO	/* undef this if you do not need macro */
 #define KSCM_CONFIG_USE_PERSIST /* undef this if you do not need persistence */
 #define KSCM_CONFIG_USE_PRECISE	/* undef this if you do not need overflow detection and precise integer size */
-#define KSCM_CONFIG_USE_STRUCTS	/* undef this if you do not need additional structure types (buffers, vectors, etc.)*/
+#define KSCM_CONFIG_USE_STRUCTS	/* undef this if you do not need additional structure types (buffers & abstractions)*/
 #define KSCM_CONFIG_USE_FLOATS  /* undef this if you do not need floating-point functionality (i.e. undefine this if you're running in kernel mode) */
+#define KSCM_CONFIG_USE_OBJECTS	/* undef this if you do not need object-oriented/vector features (these are handy but may complicate simple implementations) */
 
 #define KSCM_CONFIG_MAXLOADS 20 /* the maximum depth of the load stack */
 
@@ -362,7 +363,11 @@ error Please define your system type.
 #define KSCM_OP_ABSTRACTION_NEW		115
 #define KSCM_OP_ABSTRACTION_TYPE		116
 #define KSCM_OP_ABSTRACTION_VALUE		117
-
+#define KSCM_OP_OBJECT			118
+#define KSCM_OP_OBJECT_NEW		119
+#define KSCM_OP_OBJECT_LEN		120
+#define KSCM_OP_OBJECT_GET		121
+#define KSCM_OP_OBJECT_SET		122
 
 #define KSCM_TOK_LPAREN  0
 #define KSCM_TOK_RPAREN  1
@@ -406,6 +411,14 @@ struct kscm_cell {
 			double _dvalue;
 		} _float64;
 #endif
+#ifdef KSCM_CONFIG_USE_OBJECTS
+		struct {
+			struct kscm_cell* _type;
+			long _count;
+			long _gccount;
+			struct kscm_cell** _elements;
+		} _objx;
+#endif
 	} _object;
 };
 
@@ -421,7 +434,7 @@ typedef struct kscm_cell* kscm_object_t;
 #define KSCM_PERSIST_TCONTINUATION	8
 #define KSCM_PERSIST_TBUFFER		9
 #define KSCM_PERSIST_TABSTRACTION	10
-#define KSCM_PERSIST_TVECTOR_RESERVED	11
+#define KSCM_PERSIST_TOBJX			11
 #define KSCM_PERSIST_TFLOAT32_RESERVED	12
 #define KSCM_PERSIST_TFLOAT64		13
 #define KSCM_PERSIST_TUINT64_RESERVED	14
@@ -441,7 +454,7 @@ typedef struct kscm_cell* kscm_object_t;
 #define KSCM_T_PROMISE      512	/* 0000001000000000 */
 #define KSCM_T_BUFFER		1024/* 0000010000000000 */
 #define KSCM_T_ABSTRACTION	2048/* 0000100000000000 */
-#define KSCM_T_RESERVED		4096/* 0001000000000000 */
+#define KSCM_T_OBJX			4096/* 0001000000000000 */
 #define KSCM_T_FLOAT64		8192/* 0010000000000000 */
 #define KSCM_T_ATOM       16384	/* 0100000000000000 */	/* only for gc */
 #define KSCM_CLRATOM      49151	/* 1011111111111111 */	/* only for gc */
@@ -494,6 +507,10 @@ typedef struct kscm_cell* kscm_object_t;
 #ifdef KSCM_CONFIG_USE_STRUCTS
 #define kscm__isbuffer(kscm,p)		(kscm__type(kscm,p)&KSCM_T_BUFFER)
 #define kscm__isabstraction(kscm,p)	(kscm__type(kscm,p)&KSCM_T_ABSTRACTION)
+#endif
+
+#ifdef KSCM_CONFIG_USE_OBJECTS
+#define kscm__isobjx(kscm,p)		(kscm__type(kscm,p)&KSCM_T_OBJX)
 #endif
 
 #define kscm__isatom(kscm,p)       (kscm__type(kscm,p)&KSCM_T_ATOM)
@@ -802,6 +819,25 @@ kscm_object_t kscm__mk_abstraction(kscm_t* kscm, register kscm_object_t a, regis
 }
 #endif
 
+#ifdef KSCM_CONFIG_USE_OBJECTS
+kscm_object_t kscm__mk_objx(kscm_t* kscm, kscm_object_t typ, long len) {
+	void* d = calloc(sizeof(kscm_object_t), len);
+	if (d == NULL) {
+		return kscm->NIL;
+	}
+	kscm_object_t result = kscm__get_cell(kscm, typ, kscm->NIL);
+	kscm__type(kscm, result) = KSCM_T_OBJX;
+	result->_object._objx._type = typ;
+	result->_object._objx._count = len;
+	result->_object._objx._elements = (kscm_object_t*)d;
+	long i;
+	for (i = 0; i < len; i++) {
+		result->_object._objx._elements[i] = kscm->NIL;
+	}
+	return result;
+}
+#endif
+
 #ifdef KSCM_CONFIG_USE_PRECISE
 int kscm__safedigit(kscm_t* kscm, int base, char d) {
 	if (base <= 10) {
@@ -951,24 +987,70 @@ kscm_object_t kscm__mk_const(kscm_t* kscm, const char *name)
 /*--
  *  We use algorithm E (Kunuth, The Art of Computer Programming Vol.1,
  *  sec.3.5) for marking.
+ *
+ * NOTE: The implementation is complicated a bit when using object-oriented/vector extensions.
+ * I've decided to just use recursive marking in this case, but I've added some documentation to
+ * the original algorithm as well in case anyone wants to update it.
  */
+#ifdef KSCM_CONFIG_USE_OBJECTS
+#define KSCM_GC_MAXREC 100000
+void kscm__recursivemark(kscm_t* kscm, kscm_object_t a, int recursionlevel) {
+	if (recursionlevel > KSCM_GC_MAXREC) {
+		fprintf(stderr, "WARNING: Garbage collector is recursing like a motherfucker\n");
+		recursionlevel = 0; // We just reset it though, the warning should be enough to show if it's becoming a problem
+	}
+
+	if (kscm__ismark(kscm, a)) {
+		return;
+	}
+
+	kscm__setmark(kscm, a);
+
+	if (kscm__isatom(kscm, a)) {
+		return;
+	}
+
+	if (kscm__isobjx(kscm, a)) {
+		kscm__recursivemark(kscm, a->_object._objx._type, recursionlevel + 1);
+		int i;
+		for (i = 0; i < a->_object._objx._count; i++) {
+			//printf("Recursively marking object at index %d\n", i);
+			kscm__recursivemark(kscm, a->_object._objx._elements[i], recursionlevel + 1);
+		}
+	} else { /* Is pair or pair-like abstraction*/
+		kscm__recursivemark(kscm, kscm__car(kscm, a), recursionlevel + 1);
+		kscm__recursivemark(kscm, kscm__cdr(kscm, a), recursionlevel + 1);
+	}
+}
+void kscm__mark(kscm_t* kscm, kscm_object_t a) {
+	kscm__recursivemark(kscm, a, 1);
+}
+#else
 void kscm__mark(kscm_t* kscm, kscm_object_t a)
 {
-	register kscm_object_t t, q, p;
+	register kscm_object_t t; /* Used to track the previous object. This object will in turn be used to track it's previous. */
+	register kscm_object_t q; /* Used as a temporary value to hold our subreferences. */
+	register kscm_object_t p; /* Points to the current object. */
 
+/* E1: Start of algorithm. Reset t and p. */
 E1:	t = (kscm_object_t)0;
 	p = a;
+/* E2: Start by marking p (i.e. marking it as "keep this cell"). */
 E2:	kscm__setmark(kscm, p);
+/* E3: Check type. If it's an atom (not built out of references to other cells) we can skip marking references. */
 E3:	if (kscm__isatom(kscm, p))
 goto E6;
-E4:	q = kscm__car(kscm, p);
-if (q && !kscm__ismark(kscm, q)) {
-	kscm__setatom(kscm, p);
-	kscm__car(kscm, p) = t;
-	t = p;
-	p = q;
-	goto E2;
-}
+/* E4: Mark first reference ("car" or equivalent) if it's not already marked. */
+E4:	
+	q = kscm__car(kscm, p);
+	if (q && !kscm__ismark(kscm, q)) {
+		kscm__setatom(kscm, p);
+		kscm__car(kscm, p) = t;
+		t = p;
+		p = q;
+		goto E2;
+	}
+/* E5: Mark second/nth references if they're not already marked. */
 E5:	q = kscm__cdr(kscm, p);
 if (q && !kscm__ismark(kscm, q)) {
 	kscm__cdr(kscm, p) = t;
@@ -976,6 +1058,10 @@ if (q && !kscm__ismark(kscm, q)) {
 	p = q;
 	goto E2;
 }
+/* E6: This object is now fully marked. If there's no previous object, we can just return. Otherwise,
+ * we reload the previous object (and set the new previous to the one stored in "car" or equivalent),
+ * and continue marking it's subreferences.
+ */
 E6:	if (!t)
 return;
 q = t;
@@ -993,6 +1079,7 @@ else {
 	goto E6;
 }
 }
+#endif
 
 
 /* garbage collection. parameter a, b is marked. */
@@ -1033,9 +1120,20 @@ void kscm__gc(kscm_t* kscm, register kscm_object_t a, register kscm_object_t b)
 					if (p->_object._buffer._data != NULL) {
 						//fprintf(stderr, "Freeing a buffer of %d length\n", p->_object._buffer._length);
 						free(p->_object._buffer._data);
+						p->_object._buffer._data = NULL;
 					}
 				}
 #endif
+#ifdef KSCM_CONFIG_USE_OBJECTS
+				if (kscm__isobjx(kscm, p)) {
+					if (p->_object._objx._elements != NULL) {
+						free(p->_object._objx._elements);
+						p->_object._objx._elements = NULL;
+					}
+				}
+#endif
+				// TODO: Should probably clear the whole structure before setting defaults or adding to free list
+				// (this could help avoid bugs if larger-than-pair structures aren't cleared or reset properly elsewhere)
 				kscm__type(kscm, p) = 0;
 				kscm__cdr(kscm, p) = kscm->free_cell;
 				kscm__car(kscm, p) = kscm->NIL;
@@ -1269,6 +1367,11 @@ int kscm__printatom(kscm_t* kscm, kscm_object_t l, int f)
 	}
 	else if (kscm__isabstraction(kscm, l)) {
 		p = (char*)(void*)"#<ABSTRACTION>";
+#endif
+#ifdef KSCM_CONFIG_USE_OBJECTS
+	}
+	else if (kscm__isobjx(kscm, l)) {
+		p = (char*)(void*)"#<OBJECT>";
 #endif
 	}
 	else if (kscm__isclosure(kscm, l))
@@ -2732,6 +2835,21 @@ int kscm_save_state(kscm_t* kscm, const char* filename, const char* opts) {
 					kscm__fwrite_byte(kscm, f, bytes[7]);
 				}
 #endif
+#ifdef KSCM_CONFIG_USE_OBJECTS
+				else if (kscm__isobjx(kscm, obj)) {
+					if (kscm__isatom(kscm, obj)) {
+						fprintf(stderr, "object is atom\n");
+						exit(-1);
+					}
+					kscm__fwrite_byte(kscm, f, KSCM_PERSIST_TOBJX);
+					kscm__fwrite_int(kscm, f, kscm_get_persistent_address(kscm, obj->_object._objx._type));
+					kscm__fwrite_int(kscm, f, obj->_object._objx._count);
+					int i;
+					for (i = 0; i < obj->_object._objx._count; i++) {
+						kscm__fwrite_int(kscm, f, kscm_get_persistent_address(kscm, obj->_object._objx._elements[i]));
+					}
+				}
+#endif
 				else {
 					fprintf(stderr, "Object at %d:%d is non-free but unknown type: %d\n", s, i, obj->_flag);
 					return -1; // Not saved
@@ -3004,6 +3122,21 @@ int kscm_resume_state(kscm_t* kscm, const char* filename, const char* opts) {
 			kscm__fread_byte(kscm, f, &bytes[7]);
 		} break;
 #endif
+#ifdef KSCM_CONFIG_USE_STRUCTS
+		case KSCM_PERSIST_TOBJX:
+			obj->_flag = KSCM_T_OBJX;
+			kscm__fread_int(kscm, f, &tmpint);
+			obj->_object._objx._type = kscm_get_object_address(kscm, tmpint);
+			kscm__fread_int(kscm, f, &tmpint);
+			obj->_object._objx._count = tmpint;
+			obj->_object._objx._elements = (kscm_object_t*) calloc(sizeof(kscm_object_t), obj->_object._objx._count);
+			// TODO Check non-null (ideally check size is sane before attempting to allocate/fill)
+			for (i = 0; i < obj->_object._objx._count; i++) {
+				kscm__fread_int(kscm, f, &tmpint);
+				obj->_object._objx._elements[i] = kscm_get_object_address(kscm, tmpint);
+			}
+			break;
+#endif
 		default:
 			fprintf(stderr, "Unknown object type #%d\n", typ);
 			exit(1);
@@ -3133,6 +3266,11 @@ kscm_object_t kscm__opexe_7(kscm_t* kscm, register short op)
 		kscm__s_return(kscm, kscm__mk_abstraction(kscm, x, y));
 	case KSCM_OP_ABSTRACTION_TYPE:
 		x = kscm__car(kscm, kscm->args);
+#ifdef KSCM_CONFIG_USE_OBJECTS
+		if (kscm__isobjx(kscm, x)) {
+			kscm__s_return(kscm, x->_object._objx._type);
+		}
+#endif
 		if (!kscm__isabstraction(kscm, x)) {
 			kscm__s_retbool(kscm, 0);
 		}
@@ -3143,6 +3281,47 @@ kscm_object_t kscm__opexe_7(kscm_t* kscm, register short op)
 			kscm__s_retbool(kscm, 0);
 		}
 		kscm__s_return(kscm, kscm__cdr(kscm, x));
+#endif
+#ifdef KSCM_CONFIG_USE_OBJECTS
+	case KSCM_OP_OBJECT:
+		kscm__s_retbool(kscm, kscm__isobjx(kscm, kscm__car(kscm, kscm->args)));
+	case KSCM_OP_OBJECT_NEW:
+		x = kscm__car(kscm, kscm->args);
+		y = kscm__cadr(kscm, kscm->args);
+		if (!kscm__isnumber(kscm, y)) {
+			kscm__s_return(kscm, kscm->F);
+		}
+		kscm__s_return(kscm, kscm__mk_objx(kscm, x, kscm__ivalue(kscm, y)));
+	case KSCM_OP_OBJECT_LEN:
+		x = kscm__car(kscm, kscm->args);
+		if (!kscm__isobjx(kscm, x)) {
+			kscm__s_return(kscm, kscm->F);
+		}
+		kscm__s_return(kscm, kscm__mk_number(kscm, x->_object._objx._count));
+	case KSCM_OP_OBJECT_GET:
+		x = kscm__car(kscm, kscm->args);
+		y = kscm__cadr(kscm, kscm->args);
+		if (!kscm__isobjx(kscm, x) || !kscm__isnumber(kscm, y)) {
+			kscm__s_return(kscm, kscm->F);
+		}
+		v = kscm__ivalue(kscm, y);
+		if (v < 0 || v >= x->_object._objx._count) {
+			kscm__s_return(kscm, kscm->F);
+		}
+		kscm__s_return(kscm, x->_object._objx._elements[v]);
+	case KSCM_OP_OBJECT_SET:
+		x = kscm__car(kscm, kscm->args);
+		y = kscm__cadr(kscm, kscm->args);
+		z = kscm__caddr(kscm, kscm->args);
+		if (!kscm__isobjx(kscm, x) || !kscm__isnumber(kscm, y)) {
+			kscm__s_return(kscm, kscm->F);
+		}
+		v = kscm__ivalue(kscm, y);
+		if (v < 0 || v >= x->_object._objx._count) {
+			kscm__s_return(kscm, kscm->F);
+		}
+		x->_object._objx._elements[v] = z;
+		kscm__s_return(kscm, kscm->T);
 #endif
 	default:
 		sprintf(kscm->strbuff, "%d is illegal operator", kscm->_operator);
@@ -3280,6 +3459,11 @@ kscm_object_t(*kscm__shared_dispatch_table[])(kscm_t* kscm, register short op) =
 	&kscm__opexe_7, /* KSCM_OP_ABSTRACTION_NEW, */
 	&kscm__opexe_7, /* KSCM_OP_ABSTRACTION_LEN, */
 	&kscm__opexe_7, /* KSCM_OP_ABSTRACTION_GET, */
+	&kscm__opexe_7, /* KSCM_OP_OBJECT */
+	&kscm__opexe_7, /* KSCM_OP_OBJECT_NEW */
+	&kscm__opexe_7, /* KSCM_OP_OBJECT_LEN */
+	&kscm__opexe_7, /* KSCM_OP_OBJECT_GET */
+	&kscm__opexe_7, /* KSCM_OP_OBJECT_SET */
 };
 
 /* These and the commented-out parts of kscm__eval_cycle can be re-enabled if you need to make sure the interpreter is running.
@@ -3451,6 +3635,14 @@ void kscm__init_procs(kscm_t* kscm)
 	kscm__mk_proc(kscm, KSCM_OP_ABSTRACTION_NEW, "abstraction-new");
 	kscm__mk_proc(kscm, KSCM_OP_ABSTRACTION_TYPE, "abstraction-type");
 	kscm__mk_proc(kscm, KSCM_OP_ABSTRACTION_VALUE, "abstraction-value");
+#endif
+#ifdef KSCM_CONFIG_USE_OBJECTS
+	kscm__mk_proc(kscm, KSCM_OP_OBJECT, "object?");
+	kscm__mk_proc(kscm, KSCM_OP_OBJECT_NEW, "object-new");
+	kscm__mk_proc(kscm, KSCM_OP_OBJECT_LEN, "object-length");
+	kscm__mk_proc(kscm, KSCM_OP_OBJECT_GET, "object-get");
+	kscm__mk_proc(kscm, KSCM_OP_OBJECT_SET, "object-set!");
+	/* NOTE: There is no object-type function, the abstraction-type function handles all custom-typed values. */
 #endif
 	kscm__mk_proc(kscm, KSCM_OP_QUIT, "quit");
 }
