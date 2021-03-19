@@ -368,6 +368,7 @@ error Please define your system type.
 #define KSCM_OP_OBJECT_LEN		120
 #define KSCM_OP_OBJECT_GET		121
 #define KSCM_OP_OBJECT_SET		122
+#define KSCM_OP_OBJECT_RETYPE	123
 
 #define KSCM_TOK_LPAREN  0
 #define KSCM_TOK_RPAREN  1
@@ -3322,6 +3323,14 @@ kscm_object_t kscm__opexe_7(kscm_t* kscm, register short op)
 		}
 		x->_object._objx._elements[v] = z;
 		kscm__s_return(kscm, kscm->T);
+	case KSCM_OP_OBJECT_RETYPE:
+		x = kscm__car(kscm, kscm->args);
+		y = kscm__cadr(kscm, kscm->args);
+		if (!kscm__isobjx(kscm, x)) {
+			kscm__s_return(kscm, kscm->F);
+		}
+		x->_object._objx._type = y;
+		kscm__s_return(kscm, kscm->T);
 #endif
 	default:
 		sprintf(kscm->strbuff, "%d is illegal operator", kscm->_operator);
@@ -3464,6 +3473,7 @@ kscm_object_t(*kscm__shared_dispatch_table[])(kscm_t* kscm, register short op) =
 	&kscm__opexe_7, /* KSCM_OP_OBJECT_LEN */
 	&kscm__opexe_7, /* KSCM_OP_OBJECT_GET */
 	&kscm__opexe_7, /* KSCM_OP_OBJECT_SET */
+	&kscm__opexe_7, /* KSCM_OP_OBJECT_RETYPE */
 };
 
 /* These and the commented-out parts of kscm__eval_cycle can be re-enabled if you need to make sure the interpreter is running.
@@ -3642,6 +3652,7 @@ void kscm__init_procs(kscm_t* kscm)
 	kscm__mk_proc(kscm, KSCM_OP_OBJECT_LEN, "object-length");
 	kscm__mk_proc(kscm, KSCM_OP_OBJECT_GET, "object-get");
 	kscm__mk_proc(kscm, KSCM_OP_OBJECT_SET, "object-set!");
+	kscm__mk_proc(kscm, KSCM_OP_OBJECT_RETYPE, "object-retype!");
 	/* NOTE: There is no object-type function, the abstraction-type function handles all custom-typed values. */
 #endif
 	kscm__mk_proc(kscm, KSCM_OP_QUIT, "quit");
