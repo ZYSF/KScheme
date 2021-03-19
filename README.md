@@ -24,7 +24,7 @@ It _does_ support:
 
 It _doesn't_ support:
 
- * Particularly high performance
+ * Particularly high performance (although this is intentional, since many optimisations limit portability and future-proofing)
  * Running in completely standalone environments (it relies on a few standard C functions including malloc/calloc/free and some of stdio)
  * A nice API for embedding in larger C/C++ programs
  * Advanced string or number functionality, in particular:
