@@ -538,8 +538,8 @@ struct kscm {
 	/* arrays for segments */
 	kscm_object_t cell_seg[KSCM_CONFIG_CELL_NSEGMENT];
 	int     last_cell_seg;// = -1;
-	char* str_seg[KSCM_CONFIG_STR_NSEGMENT];
-	int     str_seglast;// = -1;
+	//char* str_seg[KSCM_CONFIG_STR_NSEGMENT];
+	//int     str_seglast;// = -1;
 
 	/* We use 4 registers (actually, some more registers are used internally). */
 	kscm_object_t args;			/* register for arguments of function */
@@ -636,7 +636,7 @@ int kscm__alloc_cellseg(kscm_t *kscm, int n)
 }
 
 /* allocate new string segment */
-int kscm__alloc_strseg(kscm_t* kscm, int n)
+/*int kscm__alloc_strseg(kscm_t* kscm, int n)
 {
 	register char* p;
 	register long i;
@@ -653,7 +653,7 @@ int kscm__alloc_strseg(kscm_t* kscm, int n)
 			*p++ = (char)(-1);
 	}
 	return n;
-}
+}*/
 
 void kscm__fatal_error(kscm_t* kscm, const char* msg, const char* a, const char* b, const char* c);
 void kscm__error(kscm_t* kscm, const char* msg, const char* a, const char* b, const char* c);
@@ -666,7 +666,7 @@ void kscm__init_scheme(kscm_t* kscm)
 	register kscm_object_t i;
 
 	kscm->last_cell_seg = -1;
-	kscm->str_seglast = -1;
+	//kscm->str_seglast = -1;
 	kscm->NIL = &kscm->_NIL;
 	kscm->T = &kscm->_T;
 	kscm->F = &kscm->_F;
@@ -675,8 +675,8 @@ void kscm__init_scheme(kscm_t* kscm)
 
 	if (kscm__alloc_cellseg(kscm, KSCM_CONFIG_FIRST_CELLSEGS) != KSCM_CONFIG_FIRST_CELLSEGS)
 		kscm__fatal_error(kscm, "Unable to allocate initial cell segments", NULL, NULL, NULL);
-	if (!kscm__alloc_strseg(kscm, 1))
-		kscm__fatal_error(kscm, "Unable to allocate initial string segments", NULL, NULL, NULL);
+	/*if (!kscm__alloc_strseg(kscm, 1))
+		kscm__fatal_error(kscm, "Unable to allocate initial string segments", NULL, NULL, NULL);*/
 #ifdef VERBOSE
 	kscm->gc_verbose = 1;
 #else
@@ -753,43 +753,43 @@ kscm_object_t kscm__mk_float64(kscm_t* kscm, double value) {
 #endif
 
 /* allocate name to string area */
-char* kscm__store_string(kscm_t* kscm, const char *name)
-{
-	register char* q = NULL;
-	register short i;
-	long    len, remain;
-
-	/* first check name has already listed */
-	for (i = 0; i <= kscm->str_seglast; i++)
-		for (q = kscm->str_seg[i]; *q != (char)(-1); ) {
-			if (!strcmp(q, name))
-				goto FOUND;
-			while (*q++)
-				;	/* get next string */
-		}
-	len = strlen(name) + 2;
-	// TODO: Replace legacy types, it's starting to get ugly. -Zak
-	remain = (long long)KSCM_CONFIG_STR_SEGSIZE - ((long long)q - (long long)kscm->str_seg[kscm->str_seglast]);
-	if (remain < len) {
-		if (!kscm__alloc_strseg(kscm, 1))
-			kscm__fatal_error(kscm, "run out of string area", NULL, NULL, NULL);
-		q = kscm->str_seg[kscm->str_seglast];
-		/*if ((long long)KSCM_CONFIG_STR_SEGSIZE - ((long long)q - (long long)kscm->str_seg[kscm->str_seglast])) {
-			fprintf(stderr, "String in question's total length is %d", len);
-			kscm__fatal_error(kscm, "string too big", NULL, NULL, NULL);
-		}*/
-	}
-	strcpy(q, name);
-FOUND:
-	return (q);
-}
+//char* kscm__store_string(kscm_t* kscm, const char *name)
+//{
+//	register char* q = NULL;
+//	register short i;
+//	long    len, remain;
+//
+//	/* first check name has already listed */
+//	for (i = 0; i <= kscm->str_seglast; i++)
+//		for (q = kscm->str_seg[i]; *q != (char)(-1); ) {
+//			if (!strcmp(q, name))
+//				goto FOUND;
+//			while (*q++)
+//				;	/* get next string */
+//		}
+//	len = strlen(name) + 2;
+//	// TODO: Replace legacy types, it's starting to get ugly. -Zak
+//	remain = (long long)KSCM_CONFIG_STR_SEGSIZE - ((long long)q - (long long)kscm->str_seg[kscm->str_seglast]);
+//	if (remain < len) {
+//		if (!kscm__alloc_strseg(kscm, 1))
+//			kscm__fatal_error(kscm, "run out of string area", NULL, NULL, NULL);
+//		q = kscm->str_seg[kscm->str_seglast];
+//		/*if ((long long)KSCM_CONFIG_STR_SEGSIZE - ((long long)q - (long long)kscm->str_seg[kscm->str_seglast])) {
+//			fprintf(stderr, "String in question's total length is %d", len);
+//			kscm__fatal_error(kscm, "string too big", NULL, NULL, NULL);
+//		}*/
+//	}
+//	strcpy(q, name);
+//FOUND:
+//	return (q);
+//}
 
 /* get new string */
 kscm_object_t kscm__mk_string(kscm_t* kscm, const char *str)
 {
 	register kscm_object_t x = kscm__get_cell(kscm, kscm->NIL, kscm->NIL);
 
-	kscm__strvalue(kscm, x) = kscm__store_string(kscm, str);
+	kscm__strvalue(kscm, x) = _strdup(str);//kscm__store_string(kscm, str);
 	kscm__type(kscm, x) = (KSCM_T_STRING | KSCM_T_ATOM);
 	kscm__keynum(kscm, x) = (short)(-1);
 	return (x);
@@ -1139,6 +1139,11 @@ void kscm__gc(kscm_t* kscm, register kscm_object_t a, register kscm_object_t b)
 			if (kscm__ismark(kscm, p))
 				kscm__clrmark(kscm, p);
 			else {
+				if (kscm__isstring(kscm, p)) {
+					if (p->_object._string._svalue != NULL) {
+						free(p->_object._string._svalue);
+					}
+				}
 #ifdef KSCM_CONFIG_USE_STRUCTS
 				if (kscm__isbuffer(kscm, p)) {
 					if (p->_object._buffer._data != NULL) {
@@ -1478,7 +1483,7 @@ int kscm__eqv(kscm_t* kscm, register kscm_object_t a, register kscm_object_t b)
 {
 	if (kscm__isstring(kscm, a)) {
 		if (kscm__isstring(kscm, b))
-			return (kscm__strvalue(kscm, a) == kscm__strvalue(kscm, b));
+			return (!strcmp(kscm__strvalue(kscm, a), kscm__strvalue(kscm, b)));
 		else
 			return (0);
 	}
@@ -3119,7 +3124,7 @@ int kscm_resume_state(kscm_t* kscm, const char* filename, const char* opts) {
 				return -1;
 			}
 			//fprintf(stderr, "Got str len %d '%s'\n", tmpint, tmpstr);
-			obj->_object._string._svalue = kscm__store_string(kscm, tmpstr);
+			obj->_object._string._svalue = _strdup(tmpstr);//kscm__store_string(kscm, tmpstr);
 			free((void*)tmpstr);
 			break;
 		case KSCM_PERSIST_TSYMBOL:
