@@ -37,7 +37,7 @@ It _doesn't_ support:
     * ~Only small integers are supported (depending on C platform, typically 32-bit) - particularly, it does not support floating-point or rational numbers~
     * Only 32-bit integers are fully-supported (but overflow detection is included so you can implement arbitrary precision types on top)
     * Basic floating point support is being added (as of March 2021), so floating point values can now be defined and stored (but functions to do maths on them haven't been added yet - not sure whether to integrate them with the integer functions or provide separate ones, so will get to this after finalising other features - but you could easily add whatever primitive functions you need manually now that floats can be passed around)
-    * Strings are not fully garbage collected (they are effectively equivalent to symbols, i.e. a string is only to represent some constant text within a program, not to represent any kind of dynamic data)
+    * ~Strings are not fully garbage collected (they are effectively equivalent to symbols, i.e. a string is only to represent some constant text within a program, not to represent any kind of dynamic data)~ This is now irrelevant, strings are now allocated from heap memory rather than an internal pool (and the memory is freed).
     * NOTE: A byte buffer type has been added which is fully garbage collected, so in the future strings will probably just use a similar mechanism (and you're better off using byte buffers if you're doing a lot of manipulation on the strings anyway). In the meantime, saving and resuming a state file will also garbage collect the strings.
     * There is no support for Unicode internally (strings are assumed to be a short sequence of non-zero bytes)
 
