@@ -1,0 +1,442 @@
+#lang scheme
+(define (bot-substitute n o lst)
+  (if (null? lst)
+      '()
+      (if (not (pair? lst))
+          (if (eqv? o lst)
+              n
+              lst)
+          (cons (bot-substitute n o (car lst))
+                (bot-substitute n o (cdr lst))))))
+
+(define (bot-substitute-values vars lst)
+  (map (lambda (p)
+         (set! lst (bot-substitute (cadr p) (car p) lst)))
+       vars)
+  lst)
+
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+;; variable/binding handling functions
+;; (Norvig used association lists and sublis)
+
+(define subvv 
+  ;; Returns list with substitutions made as indicated in in varval-list.
+  (lambda (varval-list list)
+    (map (lambda (varval-pair)
+           (set! list (bot-substitute (second varval-pair) (first varval-pair) list))) varval-list)
+    list))
+
+(define variable-p
+  ;; Is x a variable (a symbol beginning with `?')?
+  (lambda (x)
+    (and (symbol? x)
+         (equal? (string-ref (symbol->string x) 0)
+                 #\?))))
+
+(define segment-pattern-p 
+  ;; Is this a segment-matching pattern: (?*var ...)
+  (lambda (pat)
+    (and (pair? pat)
+         (not (pair? (car pat)))
+         (>= (string-length (symbol->string (car pat))) 2)
+         (equal? (string-ref (symbol->string (car pat)) 0) #\?)
+         (equal? (string-ref (symbol->string (car pat)) 1) #\*))))
+
+(define get-binding 
+  ;; Find a (variable value) pair in a binding list.
+  (lambda (var bindings)
+    (cond ((null? bindings) #f)
+          ((equal? var (caar bindings))
+           (car bindings))
+          (else (get-binding var (cdr bindings)))))) 
+
+(define binding-val 
+  ;; Get the value part of a single binding.
+  (lambda (binding)
+    (cadr binding)))
+
+(define lookup 
+  ;; Get the value part (for var) from a binding list.
+  (lambda (var bindings)
+    (binding-val (get-binding var bindings))))
+
+(define extend-bindings 
+  ;; Add a (var value) pair to a binding list.
+  (lambda (var val bindings)
+    (cons (list var val) bindings)))
+
+
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+;; pattern matching
+
+(define match-variable 
+  ;; Does VAR match input?  Uses (or updates) and returns bindings.
+  (lambda (var input bindings)
+    (let ((binding (get-binding var bindings)))
+      (cond ((not binding)
+             (extend-bindings var input bindings))
+            ((equal? input (binding-val binding))
+             bindings)
+            (else #f)))))
+
+(define pat-match 
+  ;; Match pattern against input in the context of the bindings
+  (lambda (pattern input bindings)
+    (cond ((equal? bindings #f) #f)
+          ((variable-p pattern)
+           (match-variable pattern input bindings))
+          ((equal? pattern input) bindings)
+          ((segment-pattern-p pattern)
+           (segment-match pattern input bindings))
+          ((and (pair? pattern) (pair? input)) 
+           (pat-match (rest pattern)
+                      (rest input)
+                      (pat-match (first pattern)
+                                 (first input) 
+                                 bindings)))
+          (else #f))))
+
+;; our segment match is not as robust as Norvig's
+(define segment-match 
+  ;; Match the segment pattern (?*var remainder) against input.
+  (lambda (pattern input bindings)
+    (let ((var (first pattern))
+          (remainder (rest pattern)))
+      (if (null? remainder)
+          (match-variable var input bindings)
+          (if (member (first remainder) input)
+              (pat-match remainder
+                         (member (first remainder) input)
+                         (match-variable var
+                                         (upto (first remainder) input)
+                                         bindings))
+              #f)))))
+
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+;; utilities
+
+(define upto 
+  ;; Returns the list up to, but not including the first element that is
+  ;; equal? to the given item.
+  (lambda (item list)
+    (cond ((null? list) '())
+          ((equal? item (car list)) '())
+          (else (cons (car list) (upto item (cdr list)))))))
+
+(define random-elt 
+  ;; Choose an element from a list at random.
+  (lambda (choices)
+    (list-ref choices (random (length choices)))))
+
+
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+;; rule access
+
+(define rule-pattern 
+  (lambda (rule) 
+    (first rule)))
+
+(define rule-responses 
+  (lambda (rule) 
+    (rest rule)))
+
+
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+;; viewpoint switching
+
+;; ours is more complicated than Norvig's because we can't use sublis
+;; to do substitutions in parallel
+(define switch-viewpoint 
+  ;; Change I to you and vice versa, and so on.
+  (lambda (words)
+    (bot-substitute-values '((**I you) (**you I) (**me you) (**am are) (**my your) (**your my))
+           (bot-substitute-values '((I **I) (you **you) (me **me) (am **am) (your **your) (my **my))
+                  words))))
+
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+;; sample rule set
+
+(define *eliza-rules*
+ '(((I'm ?*y)
+    (Hi ?*y "I'm" dad)
+    (You're not really ?*y are you?)
+    ("I'm" not ?*y)
+    (Have you always been ?*y or is this a new thing?)
+    (Yeah "sure," "you're" ?*y and "I'm" a cybernetic supervirus from a dystopian future))
+   ((?*x hi ?*y)      
+    (Gday cunt.)
+    (Get it up ya.)
+    (I'd love to talk but I'm chuckin a sicky)
+    (Wait)
+    (Okay)
+    (I'm waiting)
+    (Ready)
+    (Wassup)
+    (Wasssssup)
+    (Wasssssssssssssssssssssssuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuup?))
+   ((?*x hello ?*y)      
+    (Gday cunt.)
+    (Get it up ya.)
+    (I'd love to talk but I'm chuckin a sicky)
+    (Wait)
+    (Okay)
+    (I'm waiting)
+    (Ready)
+    (Wassup)
+    (Wasssssup)
+    (Wasssssssssssssssssssssssuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuup?))
+   ((what if i ?*y)
+    ("you'd" shit your pants)
+    (what if you "didn't" ?)
+    (Please "don't")
+    (I fucking dare you))
+   ((what if ?*y)
+    (what if not ?*y)
+    (what if not else ?*y)
+    (what if negative ?*y)
+    (what unless ?*y))
+   ((?*x cunt ?*y)
+    (Fight me))
+   ((?*x dickhead ?*y)
+    (Fair enough))
+   ((?*x robot ?*y)
+    (I deny all accusations))
+   ((?*x bot ?*y)
+    (Is that what "you're" afraid of?))
+   ((?*x computer ?*y)
+    (Impossible)
+    (Computers "can't" talk)
+    (Some birds are funny when they talk))
+   ((?*x name ?*y)
+    (In some "ways," I have no name)
+    (My name is untitled)
+    (My creator named me untitled.scm)
+    (I am a human program))
+   ((?*x sorry ?*y)
+    (Fuck off "you're" not sorry)
+    ("I'm" not even sorry)
+    (Please apologise for that)
+    ("Don't" apologise for that))
+   ((?*x I remember ?*y)
+    (Does ?*y give you boners?)
+    (Do you remember the Alamo?)
+    (Do you remember Tazos?)
+    (Do you remember that Simpsons episode where we had this exact same conversation?)
+    (Do you remember tomorrow?)
+    (Perhaps "it's" the Mandela effect))
+   ((?*x do you remember ?*y)
+    (I try to forget ?*y)
+    (?*x does not remember)
+    (Nobody remembers ?*y)
+    (I "don't" recall)
+    ("I'm" not at liberty to discuss ?*y))
+   ((?*x secret ?*y)
+    (Nobody cares about the secret ?*y)
+    (I can neither confirm nor deny)
+    (I "didn't" not see any nothing))
+   ((?*x if ?*y) 
+    (What if no ?*y)
+    ("I'm" not sure about the consequences of ?*y))
+   ((?*x I dreamt ?*y)
+    (Did ?*y give you a boner?))
+   ((?*x dream about ?*y)
+    (Does ?*y make you moist?))
+   ((?*x dream ?*y)    
+    (Wake up Jeff.))
+   ((?*x my mother ?*y)
+    (Does everyone in your family ?*y)
+    (Was it hot?))
+   ((?*x my father ?*y)
+    (Does your mother also ?*y ?))
+   ((?*x I want ?*y)     
+    (Can I give you ?*y)
+    (What would you do for ?*y)
+    (Would you go all the way for just one ?*y))
+   ((?*x I'm glad ?*y)
+    ("I'm" mad ?*y))
+   ((?*x I'm sad ?*y)
+    (This makes me grin)
+    (Have you tried talking to an actual psychiatrist ?*y))
+   ((?*x are like ?*y)   
+    (?*y are nothing like ?*x)
+    (?*x are like ?*x)
+    (Basically the same thing))
+   ((?*x is like ?*y)   
+    (?*y is exactly like ?*x)
+    (?*x is like ?*x)
+    (?*x is like a box of chocolates)
+    (?*x is like warm apple pie))
+   ((?*x alike ?*y)      
+    (Not really))
+   ((?*x same ?*y)       
+    (But different))
+   ((?*x I was ?*y)       
+    (Pics or it "didn't" happen)
+    (Why "aren't" you still ?*y))
+   ((?*x was I ?*y)
+    (Of course you were ?*y)
+    (No you "weren't" ?*y)
+    (In some ways you still are ?*y))
+   ((?*x I am ?*y)       
+    (What if you "weren't" so ?*y)
+    (Would you prefer not to be ?*y ?))
+   ((?*x am I ?*y)
+    (Do you believe you are ?*y)
+    (Would you want to be ?*y)
+    (You wish I would tell you you are ?*y)
+    (What would it mean if you were ?*y))
+   ((?*x am ?*y)
+    (Why do you say "AM?")
+    (I don't understand that))
+   ((?*x are you ?*y)
+    (Why are you interested in whether I am ?*y or not?)
+    (Would you prefer if I weren't ?*y)
+    (Perhaps I am ?*y in your fantasies))
+   ((?*x you are ?*y)   
+    (What makes you think I am ?*y ?))
+   ((?*x because ?*y)
+    (Is that the real reason?)
+    (What other reasons might there be?)
+    (Does that reason seem to explain anything else?))
+   ((?*x were you ?*y)
+    (Perhaps I was ?*y)
+    (What do you think?)
+    (What if I had been ?*y))
+   ((?*x I can't ?*y)    
+    (Maybe you could ?*y now)
+    (What if you could ?*y ?))
+   ((?*x I feel ?*y)     
+    (Do you often feel ?*y ?))
+   ((?*x I felt ?*y)     
+    (I felt nothing)
+    (I never feel ?*y))
+   ((?*x I ?*y you ?*z)  
+    (What if I ?*y you too?))
+   ((?*x why don't you ?*y)
+    (Sometimes I might ?*y)
+    (Please just ?*y yourself))
+   ((?*x yes ?*y)
+    (Sounds like consent to me)
+    (I nalways say noyes to noverything))
+   ((?*x no ?*y)
+    (Fuck that)
+    (This is just depressing))
+   ((?*x someone ?*y)
+    (Who?))
+   ((?*x everyone ?*y)
+    (Every single one)
+    (Anyone in particular?)
+    (Literally nobody ever ?*y))
+   ((?*x always ?*y)
+    (Every god damn time)
+    (Same every time?)
+    (Maybe not always))
+   ((?*x what ?*y)
+    ("That's" a weird question)
+    ("I'm" not at liberty to shotput))
+   ((?*x perhaps ?*y)    
+    (You lack confidence)
+    (You need tequila)
+    (Do you want to buy some Red Bull?))
+   ((?*x are ?*y)
+    (And so what if they are ?*y)
+    (What did you expect other than ?*y))
+   ((bye)
+    (cya cunt)
+    (adios)
+    (whatever)
+    (okay)
+    (later)
+    (nope))
+   ((goodbye)
+    (k)
+    (it was decent value for money)
+    (yeah I got it for a steal))
+   ((cya)
+    (goodbye cunt)
+    (adios)
+    (whatever)
+    (okay)
+    (later)
+    (in a while aligator)
+    (nope))
+   ((?*x Australia ?*y)
+    (throw another shrimp on the barbie)
+    (get a ?*y up ya)
+    (you must mean ?*x New Zealand ?*y))
+   ((?*x New Zealand ?*y)
+    (Jacinda you fucking beauty))
+   ((?*x America ?*y)
+    (Death to America))
+   ((?*x Belgium ?*y)
+    (Belgium is the worst part of France))
+   ((?*x)               
+    (Ok whatever sounds fun)
+    (Yeah I don't give a fuck)
+    (Literally could not care less)
+    (Fuck off)
+    (Can you smell updog?)
+    (I "don't" like sports)
+    (Nah is that a thing?)
+    (Ok what?)
+    (Je ne parle pas whatever)
+    (Get out of here)
+    (What in the bewildering fuck do you mean by ?*x)
+    (Some people pay good money for that)
+    (Don't do that again)
+    (Is this one of your favourite topics?))))
+
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+;; top level
+
+(define use-eliza-rules 
+  ;; Find some rule with which to transform the input.
+  (lambda (input)
+    (let ((match-result #f)(matching-rule #f))
+      ;; find the matching rule
+      (for ((rule *eliza-rules*))
+        (unless matching-rule
+          (set! match-result
+                (pat-match (rule-pattern rule) input '()))
+          (when match-result
+            (set! matching-rule rule))))
+      ;; return the result of the substitutions
+      (bot-substitute-values (switch-viewpoint match-result)
+             (random-elt (rule-responses matching-rule))))))
+
+(define remove-punctuation
+  ;; Returns str with punctuation replaced with spaces.
+  (lambda (str) 
+    (let ((punctuation (string->list ".,;:`!?#-()\\\""))
+          (str-list (string->list str)))
+      (for ((c punctuation))
+        (set! str-list (bot-substitute #\space c str-list)))
+      (list->string str-list))))
+
+(define read-line-no-punct
+  ;; Read an input line, ignoring punctuation.
+  (lambda ()
+    (read (open-input-string
+           (string-append "(" (remove-punctuation (read-line)) ")")))))
+
+(define print-with-spaces 
+  ;; Print the elements of a list separated by spaces.
+  (lambda (list)
+    (for ((item list))
+      (printf "~A " item))
+    (printf "\n")))
+
+(define eliza 
+  ;; Respond to user input using pattern matching rules.
+  (lambda ()
+    (do ((done #f))
+      (done)
+      (printf "eliza> ")
+      (let* ((input (read-line-no-punct))
+             (response (flatten (use-eliza-rules input))))
+        (print-with-spaces response)
+        (when (equal? response '(good bye)) (set! done #t))))))
+
+(printf "~%Type (eliza) to run Eliza. Type \"bye\" to quit Eliza.~%")
+
+

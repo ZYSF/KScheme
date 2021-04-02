@@ -95,9 +95,10 @@ extern "C" {
 #define KSCM_CONFIG_USE_MACRO	/* undef this if you do not need macro */
 #define KSCM_CONFIG_USE_PERSIST /* undef this if you do not need persistence */
 #define KSCM_CONFIG_USE_PRECISE	/* undef this if you do not need overflow detection and precise integer size */
-#define KSCM_CONFIG_USE_STRUCTS	/* undef this if you do not need additional structure types (buffers & abstractions)*/
+#define KSCM_CONFIG_USE_STRUCTS	/* undef this if you do not need additional structure types (buffers & abstractions) */
 #define KSCM_CONFIG_USE_FLOATS  /* undef this if you do not need floating-point functionality (i.e. undefine this if you're running in kernel mode) */
 #define KSCM_CONFIG_USE_OBJECTS	/* undef this if you do not need object-oriented/vector features (these are handy but may complicate simple implementations) */
+#define KSCM_CONFIG_USE_UTF8	/* undef this if you do not need Unicode support */
 
 #define KSCM_CONFIG_MAXLOADS 20 /* the maximum depth of the load stack */
 
@@ -130,9 +131,7 @@ extern "C" {
 #define KSCM_CONFIG_STR_NSEGMENT    10000	/* # of segments for strings */
 #endif
 
-
-
-#define KSCM_CONFIG_BANNER "Hello, This is KScheme (kscm) 0.1, based on Mini-Scheme Interpreter Version 0.85p1.\n"
+#define KSCM_CONFIG_BANNER "Hello, This is KScheme (kscm) 0.2, based on Mini-Scheme Interpreter Version 0.85p1.\n"
 
 #define KSCM_CONFIG_PERSIST_MAGIC	"KSCM"
 #define KSCM_CONFIG_PERSIST_VERSION	2
@@ -369,6 +368,9 @@ error Please define your system type.
 #define KSCM_OP_OBJECT_GET		121
 #define KSCM_OP_OBJECT_SET		122
 #define KSCM_OP_OBJECT_RETYPE	123
+#define KSCM_OP_SYMBOL_TO_STRING	124
+#define KSCM_OP_BUFFER_LOAD		125
+#define KSCM_OP_BUFFER_SAVE		126
 
 #define KSCM_TOK_LPAREN  0
 #define KSCM_TOK_RPAREN  1
@@ -1190,13 +1192,13 @@ int     kscm__inchar(kscm_t* kscm)
 				kscm->inputtop--;
 				if (kscm->inputs[kscm->inputtop] == stdin) {
 					if (!kscm->quiet)
-						printf(KSCM_CONFIG_PROMPT);
+						{printf(KSCM_CONFIG_PROMPT);fflush(stdout);}
 				}
 			}
 			else { // go back to the top-level
 				kscm->inputs[kscm->inputtop] = stdin;
 				if (!kscm->quiet)
-					printf(KSCM_CONFIG_PROMPT);
+					{printf(KSCM_CONFIG_PROMPT);fflush(stdout);}
 			}
 		}
 		strcpy(kscm->linebuff, "\n"); // TODO: Why's this here? -Zak.
@@ -1233,7 +1235,7 @@ void kscm__resetinput(kscm_t* kscm)
 		else { // go back to the top-level
 			kscm->inputs[kscm->inputtop] = stdin;
 			if (!kscm->quiet)
-				printf(KSCM_CONFIG_PROMPT);
+				{printf(KSCM_CONFIG_PROMPT);fflush(stdout);}
 		}
 	}
 	kscm__clearinput(kscm);
@@ -1578,7 +1580,7 @@ kscm_object_t kscm__opexe_0(kscm_t* kscm, register short op)
 		kscm__s_save(kscm, KSCM_OP_VALUEPRINT, kscm->NIL, kscm->NIL);
 		kscm__s_save(kscm, KSCM_OP_T1LVL, kscm->NIL, kscm->NIL);
 		if (kscm->inputs[kscm->inputtop] == stdin && !kscm->quiet)
-			printf(KSCM_CONFIG_PROMPT);
+			{printf(KSCM_CONFIG_PROMPT);fflush(stdout);}
 		kscm__s_goto(kscm, KSCM_OP_READ);
 
 	case KSCM_OP_T1LVL:	/* top level */
@@ -3305,7 +3307,16 @@ kscm_object_t kscm__opexe_7(kscm_t* kscm, register short op)
 		kscm__s_retbool(kscm, kscm__isbuffer(kscm, kscm__car(kscm, kscm->args)));
 	case KSCM_OP_BUFFER_NEW:
 		x = kscm__car(kscm, kscm->args);
-		if (!kscm__isnumber(kscm, x)) {
+		if (kscm__isstring(kscm, x)) {
+			const char* strval = kscm__strvalue(kscm, x);
+			size_t slen = strlen(strval);
+			y = kscm__mk_buffer(kscm, slen);
+			size_t iter;
+			for (iter = 0; iter < slen; iter++) {
+				y->_object._buffer._data[iter] = strval[iter];
+			}
+			kscm__s_return(kscm, y);
+		} else if (!kscm__isnumber(kscm, x)) {
 			kscm__s_return(kscm, kscm->NIL);
 		}
 		kscm__s_return(kscm, kscm__mk_buffer(kscm, kscm__ivalue(kscm, x)));
@@ -3339,6 +3350,10 @@ kscm_object_t kscm__opexe_7(kscm_t* kscm, register short op)
 		}
 		x->_object._buffer._data[v] = (unsigned char)kscm__ivalue(kscm, z);
 		kscm__s_return(kscm, kscm->T);
+	case KSCM_OP_BUFFER_LOAD:
+		kscm__s_return(kscm, kscm__mk_string(kscm, "TODO"));
+	case KSCM_OP_BUFFER_SAVE:
+		kscm__s_return(kscm, kscm__mk_string(kscm, "TODO"));
 	case KSCM_OP_ABSTRACTION:
 		kscm__s_retbool(kscm, kscm__isabstraction(kscm, kscm__car(kscm, kscm->args)));
 	case KSCM_OP_ABSTRACTION_NEW:
@@ -3412,6 +3427,34 @@ kscm_object_t kscm__opexe_7(kscm_t* kscm, register short op)
 		x->_object._objx._type = y;
 		kscm__s_return(kscm, kscm->T);
 #endif
+	case KSCM_OP_SYMBOL_TO_STRING:
+#ifdef KSCM_CONFIG_USE_STRUCTS
+		/* We handle buffer->string in the same function if structs are enabled. */
+		if (kscm__isbuffer(kscm, kscm__car(kscm, kscm->args))) {
+			x = kscm__car(kscm, kscm->args);
+			char* tmp_buffer = (char*) calloc(x->_object._buffer._length, 1);
+			if (tmp_buffer == NULL) {
+				kscm__s_return(kscm, kscm->NIL);
+			}
+			size_t iter;
+			for (iter = 0; iter < x->_object._buffer._length; iter++) {
+				tmp_buffer[iter] = x->_object._buffer._data[iter];
+			}
+			/* Note: All the messaround above was only to keep the string-creation API consistent. 
+			 * It would be easy to optimise the buffer->string case by creating the string object manually.
+			 */
+			y = kscm__mk_string(kscm, tmp_buffer);
+			free(tmp_buffer);
+			kscm__s_return(kscm, y);
+		}
+#endif
+		if (kscm__issymbol(kscm, kscm__car(kscm, kscm->args))) {
+			x = kscm__caar(kscm, kscm->args);
+			kscm__s_return(kscm, x);
+		}
+		else {
+			kscm__s_return(kscm, kscm->F);
+		}
 	default:
 		sprintf(kscm->strbuff, "%d is illegal operator", kscm->_operator);
 		kscm__error_0(kscm, kscm->strbuff);
@@ -3554,6 +3597,9 @@ kscm_object_t(*kscm__shared_dispatch_table[])(kscm_t* kscm, register short op) =
 	&kscm__opexe_7, /* KSCM_OP_OBJECT_GET */
 	&kscm__opexe_7, /* KSCM_OP_OBJECT_SET */
 	&kscm__opexe_7, /* KSCM_OP_OBJECT_RETYPE */
+	&kscm__opexe_7, /* KSCM_OP_SYMBOL_TO_STRING */
+	&kscm__opexe_7, /* KSCM_OP_BUFFER_LOAD */
+	&kscm__opexe_7, /* KSCM_OP_BUFFER_SAVE */
 };
 
 /* These and the commented-out parts of kscm__eval_cycle can be re-enabled if you need to make sure the interpreter is running.
@@ -3725,6 +3771,8 @@ void kscm__init_procs(kscm_t* kscm)
 	kscm__mk_proc(kscm, KSCM_OP_ABSTRACTION_NEW, "abstraction-new");
 	kscm__mk_proc(kscm, KSCM_OP_ABSTRACTION_TYPE, "abstraction-type");
 	kscm__mk_proc(kscm, KSCM_OP_ABSTRACTION_VALUE, "abstraction-value");
+	kscm__mk_proc(kscm, KSCM_OP_BUFFER_LOAD, "buffer-load");
+	kscm__mk_proc(kscm, KSCM_OP_BUFFER_SAVE, "buffer-save");
 #endif
 #ifdef KSCM_CONFIG_USE_OBJECTS
 	kscm__mk_proc(kscm, KSCM_OP_OBJECT, "object?");
@@ -3735,6 +3783,7 @@ void kscm__init_procs(kscm_t* kscm)
 	kscm__mk_proc(kscm, KSCM_OP_OBJECT_RETYPE, "object-retype!");
 	/* NOTE: There is no object-type function, the abstraction-type function handles all custom-typed values. */
 #endif
+	kscm__mk_proc(kscm, KSCM_OP_SYMBOL_TO_STRING, "symbol->string");
 	kscm__mk_proc(kscm, KSCM_OP_QUIT, "quit");
 }
 

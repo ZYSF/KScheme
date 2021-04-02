@@ -140,7 +140,6 @@
             (set! current-exception-handlers (cdr current-exception-handlers))
             (cons #t result))
     )))
-(begin (display "Loaded init.scm!") (newline))
 
 ;(define int+ +)
 ;(define (+ a b)
@@ -176,3 +175,16 @@
     (display expr)
     (display "\n")
     '(display "Hello, world\n")))
+
+(begin (display "Loaded init.scm!") (newline))
+
+(define (font-new . args) (cons 'font (cons args '())))
+(define font-format-8x8 (cons 'font-format '8x8))
+(define font-format-16x16 (cons 'font-format '16x16))
+(define (font-add font . args)
+    (set-cdr! (cdr font) (cons args (cddr font)))
+    '())
+(define (font-stamp . args) (cons 'font-stamp args))
+
+; Aliases for R5RS-like compatibility
+(define string-ref string-get)

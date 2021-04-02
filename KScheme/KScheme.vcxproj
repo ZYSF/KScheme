@@ -25,8 +25,10 @@
     <Text Include="init.scm" />
   </ItemGroup>
   <ItemGroup>
+    <None Include="fontdata.scm" />
     <None Include="test.scm" />
     <None Include="testlib.scm" />
+    <None Include="untitled.scm" />
   </ItemGroup>
   <PropertyGroup Label="Globals">
     <VCProjectVersion>16.0</VCProjectVersion>

@@ -31,5 +31,11 @@
     <None Include="testlib.scm">
       <Filter>Source Files</Filter>
     </None>
+    <None Include="fontdata.scm">
+      <Filter>Source Files</Filter>
+    </None>
+    <None Include="untitled.scm">
+      <Filter>Source Files</Filter>
+    </None>
   </ItemGroup>
 </Project>
