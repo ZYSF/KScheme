@@ -7,6 +7,10 @@ This is about as simple of an implementation of Scheme (a very flexible LISP-lik
 
 It's based on Mini-Scheme, but has been updated and refactored mostly to make it compile and work properly under modern compilers and operating systems (it should build out-of-the-box on Visual Studio 2019).
 
+I've since added many features and cleaned up some of the existing ones. More advanced features include persistence (you can save a program to disk and continue it later or on a different machine) and examples include a basic conversation engine (see `untitled.scm`).
+
+R5RS is used as a guide when implementing new features but full compatibility is not provided.
+
 ## NOTE
 
 Documentation is rather lacking, I've added a lot of features since Mini-Scheme so new documentation is needed.
